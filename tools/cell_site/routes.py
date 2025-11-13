@@ -3,86 +3,74 @@
 from flask import Blueprint, request, jsonify, send_file, current_app
 import os
 import traceback
-import json 
-from models import SiteNoMl
-import re   # <- you have this already
-import io   # <- ADD THIS
-import csv 
+import json
+import re
+import io
+import csv
 
-# === THIS IS THE CORRECT IMPORT ORDER ===
-# 1. Import from extensions and models first
+# Correct import order
 from extensions import db
-from models import Prediction 
+from models import Prediction, SiteNoMl
 
-# 2. THEN import your service
+# Then service import
 from .services import CellSiteService
-# === END OF FIX ===
 
-# Setup Blueprint
+from werkzeug.datastructures import FileStorage
+
+
+# ============================================================
+# 🔵 SETUP BLUEPRINT
+# ============================================================
 cell_site_bp = Blueprint('cell_site', __name__)
 
-# ---
-# --- 🔴 BUG WAS HERE 🔴 ---
-# We REMOVED this line: service = CellSiteService()
-# Creating the service here makes it "global" and shared by all requests,
-# which causes the "already exists" error.
-# ---
 
+# ============================================================
+# 🔵 GLOBAL CORS HANDLER (Fixes OPTIONS preflight for all routes)
+# ============================================================
+@cell_site_bp.before_request
+def handle_preflight_for_cell_site():
+    if request.method == "OPTIONS":
+        response = jsonify({"status": "ok"})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        response.headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        return response, 204
+
+
+# ============================================================
+# 🔵 HEALTH CHECK
+# ============================================================
 @cell_site_bp.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
         'tool': 'Cell Site Locator',
-        'version': '1.0.0',
-        'endpoints': ['/upload', '/download/<output_dir>/<filename>']
+        'version': '1.0.0'
     })
 
 
-# ============================================
-# 🔧 FIXED: Added OPTIONS method
-# ============================================
+# ============================================================
+# 🔵 UPLOAD FILE (PROCESS LOGS)
+# ============================================================
 @cell_site_bp.route('/upload', methods=['POST', 'OPTIONS'])
 def upload_file():
-    """Upload and process cell site data"""
-    
-    # Handle CORS preflight request
-    if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        return response, 204
-    
-    try:
-        # ---
-        # --- 🟢 SOLUTION IS HERE 🟢 ---
-        # We create a NEW service object for EVERY request.
-        # This ensures there is no "stale" or "cached" data from
-        # previous requests.
-        service = CellSiteService()
-        # ---
+    if request.method == "OPTIONS":
+        return "", 204
 
-        # --- 1. File Validation ---
+    try:
+        service = CellSiteService()
+
         if 'file' not in request.files:
-            current_app.logger.error("No file in request.files")
             return jsonify({'error': 'No file provided'}), 400
 
         file = request.files['file']
-        
+
         if file.filename == '':
-            current_app.logger.error("Empty filename")
             return jsonify({'error': 'No file selected'}), 400
 
-        # Now this line uses the NEW service object
         if not service.allowed_file(file.filename):
-            current_app.logger.error(f"Invalid file type: {file.filename}")
-            return jsonify({
-                'error': 'Invalid file type',
-                'allowed': list(service.ALLOWED_EXTENSIONS)
-            }), 400
+            return jsonify({'error': 'Invalid file type'}), 400
 
-        # --- 2. Extract Form Parameters ---
         params = {
             'method': request.form.get('method', 'noml'),
             'min_samples': int(request.form.get('min_samples', 30)),
@@ -94,42 +82,19 @@ def upload_file():
             'train_path': request.form.get('train_path')
         }
 
-        # --- 3. Extract Project ID ---
-        project_id = None
-        if 'project_id' in request.form:
-            # We get an integer
-            project_id = request.form.get('project_id', type=int)
-            current_app.logger.info(f"Got project_id from form: {project_id}")
-        elif 'project_data' in request.form:
-            try:
-                data = json.loads(request.form.get('project_data'))
-                project_id = data.get('Project_Id') # Match your JSON
-                current_app.logger.info(f"Got project_id from project_data: {project_id}")
-            except (json.JSONDecodeError, TypeError) as e:
-                current_app.logger.warning(f"Invalid JSON in 'project_data' field: {e}")
-                pass 
+        # Extract project_id
+        project_id = request.form.get('project_id', type=int)
 
-        current_app.logger.info(f"Processing file: {file.filename} with method: {params['method']} for Project: {project_id}")
-
-        # --- 4. Call the Service ---
-        # This line also uses the NEW service object
+        # Process file
         result = service.process_file(file, params, project_id)
-
         if not result:
-            current_app.logger.error("Service returned empty result")
-            return jsonify({'error': 'Processing failed - no result returned'}), 500
+            return jsonify({'error': 'Processing failed'}), 500
 
-        # --- 5. Log to 'predictions' Table ---
-        if result and result.get('output_dir') and result.get('results'):
-            results_dict = result.get('results') 
+        # Log result
+        if result.get('output_dir') and result.get('results'):
+            results_dict = result['results']
+            output_filename = list(results_dict.values())[0] if results_dict else 'no_file_generated'
 
-            if results_dict and isinstance(results_dict, dict) and results_dict.values():
-                 output_filename = list(results_dict.values())[0]
-            else:
-                 output_filename = 'no_file_generated'
-
-            # --- 🟢 CORRECTED SYNTAX HERE ---
-            # Changed 'key': value to key=value
             new_prediction = Prediction(
                 output_dir=result['output_dir'],
                 filename=output_filename,
@@ -137,56 +102,46 @@ def upload_file():
                 min_samples=params['min_samples'],
                 project_id=project_id
             )
-            # --- END OF FIX ---
-
             db.session.add(new_prediction)
             db.session.commit()
 
-            current_app.logger.info(f"Saved prediction {new_prediction.id} to log database.")
-
         return jsonify(result), 200
 
-    except ValueError as e:
-        current_app.logger.error(f"Validation error: {str(e)}\n{traceback.format_exc()}")
-        return jsonify({'error': f'Validation error: {str(e)}', 'type': 'ValueError'}), 400
-        
     except Exception as e:
-        db.session.rollback() 
-        current_app.logger.error(f"Upload error: {str(e)}\n{traceback.format_exc()}")
-        return jsonify({'error': str(e), 'type': type(e).__name__}), 500
-    
-from werkzeug.datastructures import FileStorage
-
-def safe_int(value):
-    try:
-        return int(float(value))
-    except:
-        return None
-
-def safe_float(value):
-    try:
-        return float(value)
-    except:
-        return None
-
-def extract_mci(cell_info_str):
-    if not cell_info_str:
-        return None
-    match = re.search(r'mCi=([0-9*]+)', cell_info_str)
-    return match.group(1) if match else None
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
 
 
+# ============================================================
+# 🔵 SAFE HELPERS
+# ============================================================
+def safe_int(v):
+    try: return int(float(v))
+    except: return None
+
+def safe_float(v):
+    try: return float(v)
+    except: return None
+
+def extract_mci(cell_info):
+    if not cell_info: return None
+    m = re.search(r'mCi=([0-9*]+)', cell_info)
+    return m.group(1) if m else None
+
+
+# ============================================================
+# 🔵 PROCESS SESSION (Convert DB logs → CSV → Run ML/NoML)
+# ============================================================
 @cell_site_bp.route('/process-session', methods=['POST'])
 def process_session():
     from models import NetworkLog
-    data = request.get_json()
 
+    data = request.get_json()
     session_ids = data.get('session_ids')
     project_id = data.get('project_id')
 
     if not session_ids or not isinstance(session_ids, list):
         return jsonify({"error": "session_ids must be a list"}), 400
-
     if not project_id:
         return jsonify({"error": "project_id is required"}), 400
 
@@ -209,8 +164,8 @@ def process_session():
             log.timestamp.isoformat() if log.timestamp else None,
             safe_float(log.lat),
             safe_float(log.lon),
-            log.m_alpha_long,     # network cluster label
-            log.network,          # technology LTE/NR
+            log.m_alpha_long,
+            log.network,
             safe_int(log.earfcn),
             safe_int(log.pci),
             safe_float(log.rsrp),
@@ -221,9 +176,8 @@ def process_session():
             log.ta
         ])
 
-    # ✅ Convert BytesIO -> FileStorage so process_file() can .save()
     csv_buffer.seek(0)
-    file_like = FileStorage(
+    csv_file = FileStorage(
         stream=csv_buffer,
         filename=f"project_{project_id}.csv",
         content_type="text/csv"
@@ -232,7 +186,7 @@ def process_session():
     service = CellSiteService()
 
     params = {
-        'method': 'noml',     # (we will upgrade this to auto mode later)
+        'method': 'noml',
         'min_samples': 30,
         'bin_size': 5,
         'soft_spacing': False,
@@ -240,23 +194,11 @@ def process_session():
         'make_map': True
     }
 
-    result = service.process_file(file_like, params, project_id)
+    result = service.process_file(csv_file, params, project_id)
 
-    if not result:
-        return jsonify({'error': 'Processing failed'}), 500
-    
-    # ✅ Log into predictions table
-    from models import Prediction
-    from extensions import db
-    
+    # Log
     if result and result.get('output_dir') and result.get('results'):
-        results_dict = result.get('results')
-    
-        if results_dict and isinstance(results_dict, dict) and results_dict.values():
-            output_filename = list(results_dict.values())[0]
-        else:
-            output_filename = 'no_file_generated'
-    
+        output_filename = list(result['results'].values())[0]
         new_prediction = Prediction(
             output_dir=result['output_dir'],
             filename=output_filename,
@@ -264,10 +206,8 @@ def process_session():
             min_samples=params['min_samples'],
             project_id=project_id
         )
-    
         db.session.add(new_prediction)
         db.session.commit()
-
 
     return jsonify({
         "status": "success",
@@ -276,133 +216,111 @@ def process_session():
     }), 200
 
 
+# ============================================================
+# 🔵 VERIFY PROJECT (FIXES YOUR FRONTEND ERROR)
+# ============================================================
+@cell_site_bp.route('/verify-project/<int:project_id>', methods=['GET', 'OPTIONS'])
+def verify_project(project_id):
+    if request.method == "OPTIONS":
+        return "", 204
 
-
-@cell_site_bp.route('/download/<output_dir>/<filename>', methods=['GET'])
-def download_file(output_dir, filename):
-    """Download generated files"""
     try:
-        safe_output_dir = os.path.basename(output_dir)
-        safe_filename = os.path.basename(filename)
-        
-        file_path = os.path.join(
-            current_app.config['OUTPUT_FOLDER'],
-            safe_output_dir,
-            safe_filename
-        )
-        
-        if not os.path.exists(file_path):
-            current_app.logger.error(f"File not found: {file_path}")
-            return jsonify({'error': 'File not found'}), 404
-        
-        return send_file(file_path, as_attachment=True, download_name=safe_filename)
-        
-    except Exception as e:
-        current_app.logger.error(f"Download error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        result = db.session.execute(
+            db.text("SELECT id FROM tbl_projects WHERE id = :pid"),
+            {"pid": project_id}
+        ).fetchone()
 
-
-@cell_site_bp.route('/outputs/<output_dir>', methods=['GET'])
-def list_outputs(output_dir):
-    """List all files in an output directory"""
-    try:
-        safe_output_dir = os.path.basename(output_dir)
-        
-        dir_path = os.path.join(current_app.config['OUTPUT_FOLDER'], safe_output_dir)
-        
-        if not os.path.exists(dir_path) or not os.path.isdir(dir_path):
-            return jsonify({'error': 'Directory not found'}), 404
-            
-        files = [f for f in os.listdir(dir_path) if os.path.isfile(os.path.join(dir_path, f))]
-        
-        return jsonify({'files': files, 'count': len(files)}), 200
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-# ============================================
-# 🔧 FIXED: Added OPTIONS method
-# ============================================
-@cell_site_bp.route('/update-project-id', methods=['POST', 'OPTIONS'])
-def update_prediction_project_id():
-    """
-    Updates the project_id for an existing prediction log entry,
-    based on the filename.
-    
-    Expects JSON:
-    {
-        "filename": "some_file.csv",
-        "Project_Id": 12345
-    }
-    """
-    
-    # Handle CORS preflight request
-    if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        return response, 204
-    
-    try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "No JSON payload provided"}), 400
-
-        filename = data.get('filename')
-        project_id = data.get('Project_Id') 
-
-        if not filename or project_id is None:
-            return jsonify({"error": "Missing 'filename' or 'Project_Id' in JSON body"}), 400
-        
-        prediction = Prediction.query.filter_by(filename=filename).first()
-        
-        if not prediction:
-            return jsonify({"error": f"Prediction not found for filename: {filename}"}), 404
-        
-        prediction.project_id = project_id
-        db.session.commit()
-        
-        current_app.logger.info(f"Updated Project_Id for '{filename}' to {project_id}")
+        if not result:
+            return jsonify({
+                "Status": 0,
+                "Exists": False,
+                "Message": f"Project {project_id} not found"
+            }), 404
 
         return jsonify({
-            "message": "Project ID updated successfully",
-            "prediction": {
-                "id": prediction.id,
-                "filename": prediction.filename,
-                "project_id": prediction.project_id
-            }
+            "Status": 1,
+            "Exists": True,
+            "Message": "Project exists",
+            "project_id": project_id
         }), 200
 
     except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Error updating project ID: {str(e)}\n{traceback.format_exc()}")
-        return jsonify({"error": str(e), "type": type(e).__name__}), 500
-    
+        return jsonify({"Status": 0, "Message": str(e)}), 500
+
+
+# ============================================================
+# 🔵 DOWNLOAD FILE
+# ============================================================
+@cell_site_bp.route('/download/<output_dir>/<filename>', methods=['GET'])
+def download_file(output_dir, filename):
+    try:
+        safe_dir = os.path.basename(output_dir)
+        safe_file = os.path.basename(filename)
+
+        file_path = os.path.join(
+            current_app.config['OUTPUT_FOLDER'], safe_dir, safe_file
+        )
+
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found'}), 404
+
+        return send_file(file_path, as_attachment=True, download_name=safe_file)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================
+# 🔵 LIST OUTPUT FILES
+# ============================================================
+@cell_site_bp.route('/outputs/<output_dir>', methods=['GET'])
+def list_outputs(output_dir):
+    safe_dir = os.path.basename(output_dir)
+    dir_path = os.path.join(current_app.config['OUTPUT_FOLDER'], safe_dir)
+
+    if not os.path.isdir(dir_path):
+        return jsonify({"error": "Directory not found"}), 404
+
+    files = os.listdir(dir_path)
+    return jsonify({"files": files, "count": len(files)}), 200
+
+
+# ============================================================
+# 🔵 UPDATE PROJECT ID FOR A PREDICTION
+# ============================================================
+@cell_site_bp.route('/update-project-id', methods=['POST', 'OPTIONS'])
+def update_project_id():
+    if request.method == "OPTIONS":
+        return "", 204
+
+    data = request.get_json()
+    filename = data.get('filename')
+    project_id = data.get('Project_Id')
+
+    if not filename or project_id is None:
+        return jsonify({"error": "Missing data"}), 400
+
+    prediction = Prediction.query.filter_by(filename=filename).first()
+    if not prediction:
+        return jsonify({"error": "Prediction not found"}), 404
+
+    prediction.project_id = project_id
+    db.session.commit()
+
+    return jsonify({"message": "Updated successfully"}), 200
+
+
+# ============================================================
+# 🔵 GET SITE-NOML BY PROJECT
+# ============================================================
 @cell_site_bp.route('/site-noml/<int:project_id>', methods=['GET'])
 def get_site_noml_by_project(project_id):
-    """
-    Fetch all SiteNoMl entries for a given project_id.
-
-    Example:
-        GET /cell-site/site-noml/12345
-    """
     try:
-        # Query all rows with the given project_id
-        from models import SiteNoMl
-
         sites = SiteNoMl.query.filter_by(project_id=project_id).all()
 
         if not sites:
-            return jsonify({
-                'message': f'No SiteNoMl data found for project_id {project_id}',
-                'count': 0,
-                'data': []
-            }), 404
+            return jsonify({'message': 'No data', 'count': 0, 'data': []}), 404
 
-        # Convert SQLAlchemy objects to JSON-serializable dicts
         site_data = [{
             'id': s.id,
             'project_id': s.project_id,
@@ -427,13 +345,10 @@ def get_site_noml_by_project(project_id):
         } for s in sites]
 
         return jsonify({
-            'project_id': project_id,
-            'count': len(site_data),
-            'data': site_data
+            "project_id": project_id,
+            "count": len(site_data),
+            "data": site_data
         }), 200
 
     except Exception as e:
-        current_app.logger.error(
-            f"Error fetching SiteNoMl data: {str(e)}\n{traceback.format_exc()}"
-        )
-        return jsonify({'error': str(e), 'type': type(e).__name__}), 500
+        return jsonify({"error": str(e)}), 500
