@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Flask
+instance/
+.webassets-cache
+
+<<<<<<< HEAD
+# Environment / Secrets
+.env
+.env.local
+
+# IDEs
+=======
+# Environment
+.env
+.env.local
+
+# IDE
+>>>>>>> 7be626a3bc684922256ec54fc388d3a49a697de9
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Project specific
+uploads/
+outputs/
+logs/
+*.log
+
+<<<<<<< HEAD
+# Data files (optional — keeps repo clean)
+=======
+# Data files
+>>>>>>> 7be626a3bc684922256ec54fc388d3a49a697de9
+*.csv
+*.xlsx
+*.xls
+*.geojson
+
+# Render
+.render/
+
+# Temporary files
+tmp/
+temp/
+<<<<<<< HEAD
+*.tmp
+=======
+*.tmp
+>>>>>>> 7be626a3bc684922256ec54fc388d3a49a697de9
