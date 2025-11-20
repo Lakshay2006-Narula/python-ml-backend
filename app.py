@@ -7,6 +7,11 @@ import logging
 from config import config
 from tools.buildings.routes import buildings_bp
 from tools.cell_site.routes import cell_site_bp
+# -------------------------------------------------
+# 1. IMPORT THE NEW BLUEPRINT
+# -------------------------------------------------
+from tools.prediction.routes import prediction_bp
+
 from extensions import db
 from flask_migrate import Migrate
 
@@ -67,6 +72,11 @@ def create_app(config_name='default'):
     # -------------------------------------------------------------------
     app.register_blueprint(buildings_bp, url_prefix='/api/buildings')
     app.register_blueprint(cell_site_bp, url_prefix='/api/cell-site')
+    
+    # -------------------------------------------------
+    # 2. REGISTER THE NEW BLUEPRINT
+    # -------------------------------------------------
+    app.register_blueprint(prediction_bp, url_prefix='/api/prediction')
 
     # -------------------------------------------------------------------
     # ROOT ENDPOINTS
@@ -77,7 +87,8 @@ def create_app(config_name='default'):
             "message": "Python ML Backend is running",
             "services": {
                 "buildings": "/api/buildings",
-                "cell_site": "/api/cell-site"
+                "cell_site": "/api/cell-site",
+                "prediction": "/api/prediction"
             }
         })
 
@@ -90,25 +101,19 @@ def create_app(config_name='default'):
         }), 200
 
     # -------------------------------------------------------------------
-    # ERROR HANDLER: 413 Payload Too Large
+    # ERROR HANDLERS (Keep your existing handlers here)
     # -------------------------------------------------------------------
     @app.errorhandler(413)
     def request_entity_too_large(error):
         app.logger.error(f"File too large: {error}")
         return jsonify({'error': 'File too large. Maximum size is 100MB'}), 413
 
-    # -------------------------------------------------------------------
-    # ERROR HANDLER: 500 Internal Server Error
-    # -------------------------------------------------------------------
     @app.errorhandler(500)
     def internal_error(error):
         app.logger.error(f"Internal error: {error}")
         db.session.rollback()
         return jsonify({'error': 'Internal server error'}), 500
 
-    # -------------------------------------------------------------------
-    # ERROR HANDLER: ALL OTHER UNHANDLED EXCEPTIONS
-    # -------------------------------------------------------------------
     @app.errorhandler(Exception)
     def handle_exception(e):
         app.logger.error(f"Unhandled exception: {str(e)}", exc_info=True)
@@ -131,7 +136,6 @@ app = create_app(app_env)
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
 
-    # ↓↓↓ IMPORTANT: Disable auto-reloader for WSGI servers
     app.run(
         host=os.getenv('HOST', '0.0.0.0'),
         port=port,
