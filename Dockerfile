@@ -32,4 +32,4 @@ COPY . .
 ENV FLASK_APP=app.py
 
 # 8. Command to run the app
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "app:app"]
+# Run in debug mode and print all errors to the console CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--log-level", "debug", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
