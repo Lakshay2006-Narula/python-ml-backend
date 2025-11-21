@@ -1,23 +1,28 @@
-from flask import Flask, jsonify
-from flask_cors import CORS
 import os
 import logging
 
+# --- CRITICAL FIX FOR DOCKER/RENDER ---
+# This must run before ANY other imports that might use matplotlib
+import matplotlib
+matplotlib.use('Agg')  # Force matplotlib to not use a window (Headless mode)
+import matplotlib.pyplot as plt
+# ---------------------------------------
+
+from flask import Flask, jsonify
+from flask_cors import CORS
+from flask_migrate import Migrate
+
 # Import config, blueprints, and db
 from config import config
+from extensions import db
+
+# Import Blueprints
 from tools.buildings.routes import buildings_bp
 from tools.cell_site.routes import cell_site_bp
-# -------------------------------------------------
-# 1. IMPORT THE NEW BLUEPRINT
-# -------------------------------------------------
 from tools.prediction.routes import prediction_bp
-
-from extensions import db
-from flask_migrate import Migrate
 
 # Migration object
 migrate = Migrate()
-
 
 def create_app(config_name='default'):
     """
@@ -72,10 +77,6 @@ def create_app(config_name='default'):
     # -------------------------------------------------------------------
     app.register_blueprint(buildings_bp, url_prefix='/api/buildings')
     app.register_blueprint(cell_site_bp, url_prefix='/api/cell-site')
-    
-    # -------------------------------------------------
-    # 2. REGISTER THE NEW BLUEPRINT
-    # -------------------------------------------------
     app.register_blueprint(prediction_bp, url_prefix='/api/prediction')
 
     # -------------------------------------------------------------------
@@ -101,7 +102,7 @@ def create_app(config_name='default'):
         }), 200
 
     # -------------------------------------------------------------------
-    # ERROR HANDLERS (Keep your existing handlers here)
+    # ERROR HANDLERS
     # -------------------------------------------------------------------
     @app.errorhandler(413)
     def request_entity_too_large(error):
@@ -117,7 +118,7 @@ def create_app(config_name='default'):
     @app.errorhandler(Exception)
     def handle_exception(e):
         app.logger.error(f"Unhandled exception: {str(e)}", exc_info=True)
-        db.session.rollback()
+        # db.session.rollback() # Safe to comment out if db not involved in every error
         return jsonify({
             'error': 'Internal server error',
             'message': str(e),
@@ -125,7 +126,6 @@ def create_app(config_name='default'):
         }), 500
 
     return app
-
 
 # -------------------------------------------------------------------
 # APP ENTRY POINT
