@@ -5,7 +5,7 @@ FROM python:3.11.0-slim
 WORKDIR /app
 
 # -------------------------------------------------------
-# 3. INSTALL SYSTEM DEPENDENCIES (The Fix)
+# 3. INSTALL SYSTEM DEPENDENCIES
 # -------------------------------------------------------
 # We need pkg-config, gcc, and libmysqlclient-dev to compile mysqlclient
 RUN apt-get update && apt-get install -y \
@@ -17,8 +17,10 @@ RUN apt-get update && apt-get install -y \
 # 4. Copy requirements
 COPY requirements.txt .
 
-# 5. Install Python packages
-RUN pip install --no-cache-dir -r requirements.txt
+# 5. Install Python packages (FIXED)
+# We upgrade pip first, then install with a high timeout (1000s) to prevent network errors
+RUN pip install --upgrade pip
+RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt
 
 # 6. Copy the rest of the code
 COPY . .
@@ -26,5 +28,5 @@ COPY . .
 # 7. (Optional) Set environment variables
 ENV FLASK_APP=app.py
 
-# 8. Command to run the app (Adjust 'app:app' if your main file is named differently)
+# 8. Command to run the app
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "app:app"]
