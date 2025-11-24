@@ -7,10 +7,11 @@ import logging
 from config import config
 from tools.buildings.routes import buildings_bp
 from tools.cell_site.routes import cell_site_bp
+from tools.prediction.routes import prediction_bp
 # -------------------------------------------------
 # 1. IMPORT THE NEW BLUEPRINT
 # -------------------------------------------------
-from tools.prediction.routes import prediction_bp
+from tools.area_breakup.routes import area_breakup_bp
 
 from extensions import db
 from flask_migrate import Migrate
@@ -72,11 +73,12 @@ def create_app(config_name='default'):
     # -------------------------------------------------------------------
     app.register_blueprint(buildings_bp, url_prefix='/api/buildings')
     app.register_blueprint(cell_site_bp, url_prefix='/api/cell-site')
+    app.register_blueprint(prediction_bp, url_prefix='/api/prediction')
     
     # -------------------------------------------------
     # 2. REGISTER THE NEW BLUEPRINT
     # -------------------------------------------------
-    app.register_blueprint(prediction_bp, url_prefix='/api/prediction')
+    app.register_blueprint(area_breakup_bp, url_prefix='/api/area-breakup')
 
     # -------------------------------------------------------------------
     # ROOT ENDPOINTS
@@ -88,7 +90,8 @@ def create_app(config_name='default'):
             "services": {
                 "buildings": "/api/buildings",
                 "cell_site": "/api/cell-site",
-                "prediction": "/api/prediction"
+                "prediction": "/api/prediction",
+                "area_breakup": "/api/area-breakup"
             }
         })
 
@@ -117,7 +120,12 @@ def create_app(config_name='default'):
     @app.errorhandler(Exception)
     def handle_exception(e):
         app.logger.error(f"Unhandled exception: {str(e)}", exc_info=True)
-        db.session.rollback()
+        # Only rollback if db session is active
+        try:
+            db.session.rollback()
+        except:
+            pass
+            
         return jsonify({
             'error': 'Internal server error',
             'message': str(e),
