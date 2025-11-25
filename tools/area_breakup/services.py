@@ -10,7 +10,7 @@ import folium
 from flask import current_app
 
 # Database
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 # Clustering
 from sklearn.cluster import DBSCAN, KMeans
@@ -68,7 +68,41 @@ def save_to_database(gdf, table_name, project_id, name):
     except Exception as e:
         print(f"❌ Database Error for {table_name}: {e}")
 
-# ================== CORE LOGIC ==================
+# ================== DB FETCH FUNCTION (NEW) ==================
+def get_project_data(project_id):
+    """
+    Fetches data from all three tables for a specific project_id.
+    """
+    engine = get_db_engine()
+    if engine is None:
+        return None
+
+    results = {}
+    
+    try:
+        with engine.connect() as conn:
+            # 1. Fetch Grid Blocks
+            query_grid = text("SELECT * FROM output_grid_blocks WHERE project_id = :pid")
+            df_grid = pd.read_sql(query_grid, conn, params={"pid": project_id})
+            results["grid_blocks"] = df_grid.replace({np.nan: None}).to_dict(orient="records")
+
+            # 2. Fetch AI Zones
+            query_zones = text("SELECT * FROM output_ai_zones WHERE project_id = :pid")
+            df_zones = pd.read_sql(query_zones, conn, params={"pid": project_id})
+            results["ai_zones"] = df_zones.replace({np.nan: None}).to_dict(orient="records")
+
+            # 3. Fetch Building Clusters
+            query_clusters = text("SELECT * FROM output_building_clusters WHERE project_id = :pid")
+            df_clusters = pd.read_sql(query_clusters, conn, params={"pid": project_id})
+            results["building_clusters"] = df_clusters.replace({np.nan: None}).to_dict(orient="records")
+
+        return results
+
+    except Exception as e:
+        print(f"❌ Error fetching data: {e}")
+        return None
+
+# ================== CORE GIS LOGIC ==================
 
 def choose_utm_crs(gdf_4326):
     centroid = gdf_4326.to_crs("EPSG:4326").geometry.union_all().centroid

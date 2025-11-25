@@ -7,11 +7,13 @@ from .services import (
     create_ai_zones, 
     cluster_buildings_to_polygons, 
     save_to_database, 
-    export_files
+    export_files,
+    get_project_data  # <--- Added import
 )
 
 area_breakup_bp = Blueprint('area_breakup', __name__)
 
+# ================== PROCESS ENDPOINT (POST) ==================
 @area_breakup_bp.route('/process', methods=['POST'])
 def process_data():
     try:
@@ -72,4 +74,41 @@ def process_data():
 
     except Exception as e:
         current_app.logger.error(f"Area Breakup Error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# ================== FETCH ENDPOINT (GET) ==================
+@area_breakup_bp.route('/fetch/<project_id>', methods=['GET'])
+def fetch_data(project_id):
+    """
+    API to get saved data for a specific Project ID.
+    Usage: GET /api/area-breakup/fetch/100
+    """
+    try:
+        data = get_project_data(project_id)
+        
+        if data is None:
+             return jsonify({
+                "status": "error", 
+                "message": "Database connection failed or error executing query."
+            }), 500
+
+        # Check if we actually found data
+        count_grid = len(data.get("grid_blocks", []))
+        count_zones = len(data.get("ai_zones", []))
+        
+        if count_grid == 0 and count_zones == 0:
+            return jsonify({
+                "status": "success",
+                "message": f"No data found for project_id: {project_id}",
+                "data": {}
+            }), 404
+
+        return jsonify({
+            "status": "success",
+            "project_id": project_id,
+            "data": data
+        }), 200
+
+    except Exception as e:
+        current_app.logger.error(f"Fetch Error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
