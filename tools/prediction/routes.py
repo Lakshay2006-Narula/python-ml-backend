@@ -13,9 +13,10 @@ def run_prediction():
     Endpoint to run the LTE Prediction Pipeline.
     Expects JSON:
     {
-        "Project_id": 123,
-        "Session_ids": [101, 102],
-        "indoor_mode": "heuristic" (optional)
+        "Project_id": 99,
+        "Session_ids": [1629],
+        "indoor_mode": "heuristic",
+        "grid": 5
     }
     """
     data = request.get_json()
@@ -26,25 +27,33 @@ def run_prediction():
     project_id = data.get('Project_id')
     session_ids = data.get('Session_ids')
     indoor_mode = data.get('indoor_mode', 'heuristic')
+    
+    # --- CHANGE: Extract 'grid' from input (Default to 5 if missing) ---
+    try:
+        # We look for "grid" in the input, but we use 22.0 as a backup
+        pixel_size = float(data.get('grid', 22.0))
+    except (ValueError, TypeError):
+        return jsonify({"error": "grid value must be a number"}), 400
+    # -------------------------------------------------------------------
 
     if not project_id or not session_ids:
         return jsonify({"error": "Missing Project_id or Session_ids"}), 400
 
-    # Create a specific output folder for this run
     output_base = current_app.config.get('OUTPUT_FOLDER', os.path.join(os.getcwd(), 'outputs'))
     run_id = str(uuid.uuid4())
     run_dir = os.path.join(output_base, f"lte_run_{run_id}")
 
     try:
-        # Using Flask-SQLAlchemy's engine to connect to the DB
-        # We use .begin() to ensure a transaction is opened and closed properly
         with db.engine.begin() as connection:
             out_dir, count = run_prediction_pipeline(
                 db_connection=connection,
                 project_id=str(project_id),
                 session_ids=[str(s) for s in session_ids],
                 outdir=run_dir,
-                indoor_mode=indoor_mode
+                indoor_mode=indoor_mode,
+                # --- Pass the value to the function ---
+                pixel_size_meters=pixel_size
+                # --------------------------------------
             )
 
         return jsonify({
@@ -52,6 +61,7 @@ def run_prediction():
             "project_id": project_id,
             "predictions_saved": count,
             "output_directory": out_dir,
+            "grid_size_used": pixel_size,
             "run_id": run_id
         }), 200
 

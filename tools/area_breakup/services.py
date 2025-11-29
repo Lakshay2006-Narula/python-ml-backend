@@ -19,7 +19,8 @@ from geovoronoi import voronoi_regions_from_coords
 
 # ================== CONFIG ==================
 BUILDING_CLUSTER_EPS_METERS = 100
-BUILDING_CLUSTER_MIN_SAMPLES = 10
+# Default fallback if user doesn't provide input
+DEFAULT_MIN_SAMPLES = 10 
 
 def get_db_engine():
     """Create a database engine based on current app config or env"""
@@ -137,7 +138,8 @@ def fetch_buildings(mask_polygon):
             buildings = buildings.to_crs("EPSG:4326")
     return buildings
 
-def cluster_buildings_to_polygons(buildings_gdf, mask_polygon):
+# --- CHANGED: Added min_samples argument ---
+def cluster_buildings_to_polygons(buildings_gdf, mask_polygon, min_samples=DEFAULT_MIN_SAMPLES):
     if buildings_gdf.empty:
         return gpd.GeoDataFrame(columns=["cluster_id", "geometry"], geometry="geometry", crs="EPSG:4326")
 
@@ -145,7 +147,8 @@ def cluster_buildings_to_polygons(buildings_gdf, mask_polygon):
     buildings_utm = buildings_gdf.to_crs(utm_crs)
     coords = np.array([[p.x, p.y] for p in buildings_utm.geometry.centroid])
 
-    db = DBSCAN(eps=BUILDING_CLUSTER_EPS_METERS, min_samples=BUILDING_CLUSTER_MIN_SAMPLES).fit(coords)
+    # --- CHANGED: Using the passed min_samples argument ---
+    db = DBSCAN(eps=BUILDING_CLUSTER_EPS_METERS, min_samples=min_samples).fit(coords)
     labels = db.labels_
 
     cluster_geoms, cluster_ids = [], []

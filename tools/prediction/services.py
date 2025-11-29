@@ -245,7 +245,8 @@ def run_prediction_pipeline(
     project_id: str, 
     session_ids: List[str],
     outdir: str,
-    indoor_mode: str = "heuristic"
+    indoor_mode: str = "heuristic",
+    pixel_size_meters: float = 22.0  #  (Default 22m)
 ):
     os.makedirs(outdir, exist_ok=True)
     
@@ -278,14 +279,22 @@ def run_prediction_pipeline(
     test_df = standardize_latlon(normcols(test_df))
     
     if test_df.empty:
+        # Calculate bounds with a small buffer
         min_lat = dt_df['lat'].min() - 0.0005 
         max_lat = dt_df['lat'].max() + 0.0005
         min_lon = dt_df['lon'].min() - 0.0005
         max_lon = dt_df['lon'].max() + 0.0005
         
-        step = 0.0002 
-        lat_steps = np.arange(min_lat, max_lat, step)
-        lon_steps = np.arange(min_lon, max_lon, step)
+        # 1 degree lat approx 111,111 meters
+        step_lat = pixel_size_meters / 111111.0
+        
+        # cos(lat) adjustment is needed because longitude lines get closer at poles
+        avg_lat_rad = np.radians((min_lat + max_lat) / 2)
+        step_lon = pixel_size_meters / (111111.0 * np.cos(avg_lat_rad))
+        # -----------------------------
+
+        lat_steps = np.arange(min_lat, max_lat, step_lat)
+        lon_steps = np.arange(min_lon, max_lon, step_lon)
         gv_lat, gv_lon = np.meshgrid(lat_steps, lon_steps)
         
         test_df = pd.DataFrame({

@@ -8,7 +8,7 @@ from .services import (
     cluster_buildings_to_polygons, 
     save_to_database, 
     export_files,
-    get_project_data  # <--- Added import
+    get_project_data 
 )
 
 area_breakup_bp = Blueprint('area_breakup', __name__)
@@ -22,6 +22,11 @@ def process_data():
         wkt_string = data.get("WKT")
         project_id = data.get("project_id")
         block_size = float(data.get("grid", 100))
+        
+        # --- CHANGED: Extract min_samples from input (Default to 10) ---
+        # The user can pass "min_samples" in the JSON to control clustering
+        min_samples = int(data.get("min_samples", 10))
+        # -----------------------------------------------------------------
 
         if not wkt_string:
             return jsonify({"status": "error", "message": "WKT is required"}), 400
@@ -59,7 +64,8 @@ def process_data():
                 results_summary.append(f"AI Zones: {len(g_ai_zones)} zones saved. Files: {files}")
 
             # 4. PROCESS CLUSTERS
-            g_clusters = cluster_buildings_to_polygons(g_buildings, mask_polygon)
+            # --- CHANGED: Passing the user-defined min_samples here ---
+            g_clusters = cluster_buildings_to_polygons(g_buildings, mask_polygon, min_samples=min_samples)
             if not g_clusters.empty:
                 save_to_database(g_clusters, "output_building_clusters", project_id, name)
                 files = export_files(g_clusters, f"{name}_clusters")
@@ -69,7 +75,11 @@ def process_data():
             "status": "success",
             "project_id": project_id,
             "message": "Processing complete.",
-            "details": results_summary
+            "details": results_summary,
+            "parameters": {
+                "grid_size": block_size,
+                "min_samples": min_samples
+            }
         })
 
     except Exception as e:
