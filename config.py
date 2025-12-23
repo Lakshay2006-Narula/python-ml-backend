@@ -55,13 +55,14 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
     # 3. This passes the SSL certificate
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        'connect_args': {
-            'ssl': {
-                'ca': os.path.join(BASE_DIR, 'ca.pem')
-            }
-        }
-    }
+    # SQLALCHEMY_ENGINE_OPTIONS = {
+    #     'connect_args': {
+    #         'ssl': {
+    #             'ca': os.path.join(BASE_DIR, 'ca.pem')
+    #         }
+    #     }
+    # }
+    SQLALCHEMY_ENGINE_OPTIONS = {}
     # === END OF DATABASE CONFIGURATION ===
     
     # Tool configs
