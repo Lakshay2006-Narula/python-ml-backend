@@ -95,7 +95,7 @@ def debug_database(project_id):
             results['all_tables'] = [t[0] for t in tables]
             
             # 2. Check Project
-            proj = conn.execute(text(f"SELECT * FROM tbl_projects WHERE id = {project_id}")).fetchone()
+            proj = conn.execute(text(f"SELECT * FROM tbl_project WHERE id = {project_id}")).fetchone()
             results['project_exists'] = "YES" if proj else "NO"
             
             # 3. Check Site Data (Check BOTH lowercase and mixed case)
