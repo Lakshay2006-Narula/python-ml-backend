@@ -7,6 +7,7 @@ import time
 import pandas as pd
 import traceback
 import numpy as np
+import uuid
 
 from . import cell_site_processing as site
 from extensions import db
@@ -93,7 +94,7 @@ class CellSiteService:
                 df['site_key_inferred'] = df.apply(
                     lambda row: row['site_key_inferred']
                     if isinstance(row['site_key_inferred'], str) and row['site_key_inferred'].strip() != ""
-                    else f"AUTO_{row.name}_{int(row['earfcn_or_narfcn'])}_{int(row['pci_or_psi'])}_{int(row['project_id'])}",
+                    else f"AUTO_{uuid.uuid4().hex[:8]}_{int(row['earfcn_or_narfcn'])}_{int(row['pci_or_psi'])}_{int(row['project_id'])}",
                     axis=1
                 )
 
