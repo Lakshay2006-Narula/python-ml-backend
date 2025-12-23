@@ -226,7 +226,7 @@ def verify_project(project_id):
 
     try:
         result = db.session.execute(
-            db.text("SELECT id FROM tbl_projects WHERE id = :pid"),
+            db.text("SELECT id FROM tbl_project WHERE id = :pid"),
             {"pid": project_id}
         ).fetchone()
 
