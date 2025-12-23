@@ -46,7 +46,7 @@ KPI_RANGES = {
 }
 
 # -------------------------------------------------------------------
-# HELPER FUNCTIONS (Copied from your source and cleaned)
+# HELPER FUNCTIONS
 # -------------------------------------------------------------------
 
 def clamp_array(arr, kpi_name):
@@ -254,11 +254,22 @@ def run_prediction_pipeline(
         raise RuntimeError("No Session_ids provided.")
         
     # 1. Load Site Data
-    site_query = f"SELECT * FROM `site_noMl` WHERE project_id = '{project_id}'"
-    site_df = pd.read_sql(site_query, db_connection)
+    # 🟢 FIX: Use lowercase 'site_noml' for Linux/AWS RDS compatibility
+    site_query = f"SELECT * FROM `site_noml` WHERE project_id = '{project_id}'"
+    
+    try:
+        site_df = pd.read_sql(site_query, db_connection)
+    except Exception as e:
+        # Fallback for systems where table might still be CamelCase
+        try:
+            site_query_alt = f"SELECT * FROM `site_noMl` WHERE project_id = '{project_id}'"
+            site_df = pd.read_sql(site_query_alt, db_connection)
+        except:
+            raise RuntimeError(f"Could not load site data from DB. Error: {e}")
+
     site_df = standardize_latlon(normcols(site_df))
     if site_df.empty:
-        raise RuntimeError(f"No site data found for project_id: {project_id}")
+        raise RuntimeError(f"No site data found for project_id: {project_id}. Ensure you ran the Upload/Process Session step successfully.")
 
     # 2. Load Drive Test (Training) Data
     session_ids_sql_str = ", ".join([f"'{s}'" for s in session_ids])
