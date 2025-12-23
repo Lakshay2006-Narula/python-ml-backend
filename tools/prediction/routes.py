@@ -2,19 +2,24 @@ from flask import Blueprint, request, jsonify, current_app
 import os
 import uuid
 import traceback
+from sqlalchemy import text  # Required for raw SQL queries in debug endpoint
 from extensions import db
 from tools.prediction.services import run_prediction_pipeline
 
+# Define the Blueprint
 prediction_bp = Blueprint('prediction', __name__)
 
+# ============================================================
+# 🔵 RUN PREDICTION PIPELINE
+# ============================================================
 @prediction_bp.route('/run', methods=['POST'])
 def run_prediction():
     """
     Endpoint to run the LTE Prediction Pipeline.
     Expects JSON:
     {
-        "Project_id": 99,
-        "Session_ids": [1629],
+        "Project_id": 137,
+        "Session_ids": [2747, 2745],
         "indoor_mode": "heuristic",
         "grid": 5
     }
@@ -28,22 +33,22 @@ def run_prediction():
     session_ids = data.get('Session_ids')
     indoor_mode = data.get('indoor_mode', 'heuristic')
     
-    # --- CHANGE: Extract 'grid' from input (Default to 5 if missing) ---
+    # Extract 'grid' from input (Default to 22.0 if missing or invalid)
     try:
-        # We look for "grid" in the input, but we use 22.0 as a backup
         pixel_size = float(data.get('grid', 22.0))
     except (ValueError, TypeError):
         return jsonify({"error": "grid value must be a number"}), 400
-    # -------------------------------------------------------------------
 
     if not project_id or not session_ids:
         return jsonify({"error": "Missing Project_id or Session_ids"}), 400
 
+    # Setup Output Directory
     output_base = current_app.config.get('OUTPUT_FOLDER', os.path.join(os.getcwd(), 'outputs'))
     run_id = str(uuid.uuid4())
     run_dir = os.path.join(output_base, f"lte_run_{run_id}")
 
     try:
+        # Use a transaction connection
         with db.engine.begin() as connection:
             out_dir, count = run_prediction_pipeline(
                 db_connection=connection,
@@ -51,16 +56,14 @@ def run_prediction():
                 session_ids=[str(s) for s in session_ids],
                 outdir=run_dir,
                 indoor_mode=indoor_mode,
-                # --- Pass the value to the function ---
                 pixel_size_meters=pixel_size
-                # --------------------------------------
             )
 
         return jsonify({
             "message": "Prediction successful",
             "project_id": project_id,
             "predictions_saved": count,
-            "output_directory": out_dir,
+            "output_directory": os.path.basename(out_dir),
             "grid_size_used": pixel_size,
             "run_id": run_id
         }), 200
@@ -72,3 +75,45 @@ def run_prediction():
             "error": "Prediction pipeline failed",
             "detail": str(e)
         }), 500
+
+
+# ============================================================
+# 🔵 DEBUG DATABASE (Add this to check your table status)
+# ============================================================
+@prediction_bp.route('/debug-db/<int:project_id>', methods=['GET'])
+def debug_database(project_id):
+    """
+    Helper endpoint to check if data actually exists in the DB.
+    Usage: GET /api/prediction/debug-db/137
+    """
+    try:
+        results = {}
+        
+        with db.engine.connect() as conn:
+            # 1. Check Tables
+            tables = conn.execute(text("SHOW TABLES")).fetchall()
+            results['all_tables'] = [t[0] for t in tables]
+            
+            # 2. Check Project
+            proj = conn.execute(text(f"SELECT * FROM tbl_projects WHERE id = {project_id}")).fetchone()
+            results['project_exists'] = "YES" if proj else "NO"
+            
+            # 3. Check Site Data (Check BOTH lowercase and mixed case)
+            try:
+                # Standard lowercase (Linux/AWS default)
+                site_count = conn.execute(text(f"SELECT COUNT(*) FROM site_noml WHERE project_id = {project_id}")).scalar()
+                results['site_noml_count'] = site_count
+            except Exception as e:
+                results['site_noml_error'] = str(e)
+
+            try:
+                # Old CamelCase (Windows default)
+                site_count_camel = conn.execute(text(f"SELECT COUNT(*) FROM site_noMl WHERE project_id = {project_id}")).scalar()
+                results['site_noMl_count'] = site_count_camel
+            except Exception as e:
+                results['site_noMl_error'] = str(e)
+                
+        return jsonify(results), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
