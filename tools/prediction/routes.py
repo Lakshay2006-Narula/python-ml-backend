@@ -1,3 +1,4 @@
+# /tools/prediction/routes.py
 from flask import Blueprint, request, jsonify, current_app
 import os
 import uuid
@@ -80,40 +81,29 @@ def run_prediction():
 # ============================================================
 # 🔵 DEBUG DATABASE (Add this to check your table status)
 # ============================================================
+# ============================================================
+# 🔵 DEBUG DATABASE (Corrected Table Name)
+# ============================================================
 @prediction_bp.route('/debug-db/<int:project_id>', methods=['GET'])
 def debug_database(project_id):
-    """
-    Helper endpoint to check if data actually exists in the DB.
-    Usage: GET /api/prediction/debug-db/137
-    """
     try:
         results = {}
-        
         with db.engine.connect() as conn:
             # 1. Check Tables
             tables = conn.execute(text("SHOW TABLES")).fetchall()
             results['all_tables'] = [t[0] for t in tables]
             
-            # 2. Check Project
+            # 2. Check Project (🟢 FIX: Use 'tbl_project')
             proj = conn.execute(text(f"SELECT * FROM tbl_project WHERE id = {project_id}")).fetchone()
             results['project_exists'] = "YES" if proj else "NO"
             
-            # 3. Check Site Data (Check BOTH lowercase and mixed case)
+            # 3. Check Site Data (🟢 FIX: Use 'site_noMl')
             try:
-                # Standard lowercase (Linux/AWS default)
-                site_count = conn.execute(text(f"SELECT COUNT(*) FROM site_noml WHERE project_id = {project_id}")).scalar()
-                results['site_noml_count'] = site_count
-            except Exception as e:
-                results['site_noml_error'] = str(e)
-
-            try:
-                # Old CamelCase (Windows default)
-                site_count_camel = conn.execute(text(f"SELECT COUNT(*) FROM site_noMl WHERE project_id = {project_id}")).scalar()
-                results['site_noMl_count'] = site_count_camel
+                site_count = conn.execute(text(f"SELECT COUNT(*) FROM site_noMl WHERE project_id = {project_id}")).scalar()
+                results['site_noMl_count'] = site_count
             except Exception as e:
                 results['site_noMl_error'] = str(e)
                 
         return jsonify(results), 200
-        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
