@@ -1,3 +1,4 @@
+# tools/prediction/services.py
 import os
 import json
 import math
@@ -246,7 +247,7 @@ def run_prediction_pipeline(
     session_ids: List[str],
     outdir: str,
     indoor_mode: str = "heuristic",
-    pixel_size_meters: float = 22.0  #  (Default 22m)
+    pixel_size_meters: float = 22.0
 ):
     os.makedirs(outdir, exist_ok=True)
     
@@ -254,22 +255,19 @@ def run_prediction_pipeline(
         raise RuntimeError("No Session_ids provided.")
         
     # 1. Load Site Data
-    # 🟢 FIX: Use lowercase 'site_noml' for Linux/AWS RDS compatibility
-    site_query = f"SELECT * FROM `site_noml` WHERE project_id = '{project_id}'"
+    # 🟢 FIX: Use 'site_noMl' (Exact match from your DB list)
+    site_query = f"SELECT * FROM `site_noMl` WHERE project_id = '{project_id}'"
     
     try:
         site_df = pd.read_sql(site_query, db_connection)
     except Exception as e:
-        # Fallback for systems where table might still be CamelCase
-        try:
-            site_query_alt = f"SELECT * FROM `site_noMl` WHERE project_id = '{project_id}'"
-            site_df = pd.read_sql(site_query_alt, db_connection)
-        except:
-            raise RuntimeError(f"Could not load site data from DB. Error: {e}")
+        raise RuntimeError(f"Could not load site data from table 'site_noMl'. Error: {e}")
 
     site_df = standardize_latlon(normcols(site_df))
+    
+    # 🔴 CRITICAL CHECK: If this is empty, Prediction cannot run.
     if site_df.empty:
-        raise RuntimeError(f"No site data found for project_id: {project_id}. Ensure you ran the Upload/Process Session step successfully.")
+        raise RuntimeError(f"No site data found in 'site_noMl' for project_id: {project_id}. You MUST re-run the 'Process Session' (Upload) step successfully before predicting.")
 
     # 2. Load Drive Test (Training) Data
     session_ids_sql_str = ", ".join([f"'{s}'" for s in session_ids])
@@ -474,7 +472,7 @@ def run_prediction_pipeline(
         out[f"pred_{tgt}"] = pred 
 
     out_to_db = pd.DataFrame({
-        "tbl_project_id": int(project_id),
+        "tbl_project_id": int(project_id), # This maps to 'tbl_project' foreign key
         "lat": out["lat"],
         "lon": out["lon"],
         "rsrp": out.get("pred_rsrp", np.nan),
@@ -510,5 +508,4 @@ def run_prediction_pipeline(
         method='multi'
     )
 
-    # Return the output path and count
     return outdir, len(final_out_to_db)
