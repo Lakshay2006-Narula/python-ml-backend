@@ -1,23 +1,23 @@
 # tools/prediction/routes.py
-
 from flask import Blueprint, request, jsonify, current_app
+from sqlalchemy import text
 import os
 import uuid
 import traceback
-from sqlalchemy import text
+
 from extensions import db
 from tools.prediction.services import run_prediction_pipeline
 
 prediction_bp = Blueprint("prediction", __name__)
 
 
-# ============================================================
-# 🔵 RUN PREDICTION PIPELINE
-# ============================================================
+# =====================================================================
+# 🔵 RUN LTE PREDICTION PIPELINE
+# =====================================================================
 @prediction_bp.route("/run", methods=["POST"])
 def run_prediction():
     """
-    Expects JSON:
+    Input JSON:
     {
         "Project_id": 145,
         "Session_ids": [2685, 2683, 1690],
@@ -26,41 +26,41 @@ def run_prediction():
     }
     """
 
-    data = request.get_json()
+    payload = request.get_json()
 
-    if not data:
-        return jsonify({"error": "No JSON body found"}), 400
+    if not payload:
+        return jsonify({"error": "No JSON body provided"}), 400
 
-    project_id = data.get("Project_id")
-    session_ids = data.get("Session_ids")
-    indoor_mode = data.get("indoor_mode", "heuristic")
+    # ---- Extract required fields ----
+    project_id = payload.get("Project_id")
+    session_ids = payload.get("Session_ids")
+    indoor_mode = payload.get("indoor_mode", "heuristic")
 
-    # Parse grid safely
+    # validate numeric grid
     try:
-        pixel_size = float(data.get("grid", 22.0))
-        if pixel_size <= 0:
-            raise ValueError
-    except Exception:
-        return jsonify({"error": "grid must be a positive numeric value"}), 400
+        pixel_size = float(payload.get("grid", 22.0))
+    except:
+        return jsonify({"error": "grid must be a valid number"}), 400
 
-    # Basic required fields
-    if not project_id or not session_ids:
-        return jsonify({
-            "error": "Project_id and Session_ids are required"
-        }), 400
+    # ---- Validate input ----
+    if not project_id:
+        return jsonify({"error": "Project_id is required"}), 400
 
-    # Output directory
-    output_base = current_app.config.get(
+    if not session_ids or not isinstance(session_ids, list):
+        return jsonify({"error": "Session_ids must be a non-empty list"}), 400
+
+    # ---- Setup output folder ----
+    output_root = current_app.config.get(
         "OUTPUT_FOLDER",
         os.path.join(os.getcwd(), "outputs")
     )
+
     run_id = str(uuid.uuid4())
-    run_dir = os.path.join(output_base, f"lte_run_{run_id}")
+    run_dir = os.path.join(output_root, f"lte_run_{run_id}")
 
+    # ---- Execute pipeline ----
     try:
-        # Use DB transaction
         with db.engine.begin() as conn:
-
             out_dir, count = run_prediction_pipeline(
                 db_connection=conn,
                 project_id=str(project_id),
@@ -71,17 +71,16 @@ def run_prediction():
             )
 
         return jsonify({
-            "message": "Prediction successful",
+            "message": "Prediction completed successfully",
             "project_id": project_id,
-            "session_ids_used": session_ids,
-            "grid_size": pixel_size,
-            "predictions_saved": count,
-            "output_directory": os.path.basename(out_dir),
+            "rows_saved": count,
+            "output_folder": os.path.basename(out_dir),
+            "grid_size_used": pixel_size,
             "run_id": run_id
         }), 200
 
     except Exception as e:
-        current_app.logger.error(f"Prediction Error: {e}")
+        current_app.logger.error(f"Prediction Error → {str(e)}")
         current_app.logger.error(traceback.format_exc())
 
         return jsonify({
@@ -90,38 +89,37 @@ def run_prediction():
         }), 500
 
 
-
-# ============================================================
-# 🔵 DEBUG DATABASE STATUS
-# ============================================================
+# =====================================================================
+# 🔵 DEBUG ENDPOINT
+# Helps you check if the DB is prepared correctly for prediction.
+# =====================================================================
 @prediction_bp.route("/debug-db/<int:project_id>", methods=["GET"])
 def debug_database(project_id):
-
     try:
-        results = {}
+        out = {}
 
         with db.engine.connect() as conn:
 
-            # 1. Check tables
+            # list all tables
             tables = conn.execute(text("SHOW TABLES")).fetchall()
-            results["all_tables"] = [t[0] for t in tables]
+            out["all_tables"] = [t[0] for t in tables]
 
-            # 2. Check valid project
+            # check project
             proj = conn.execute(
                 text(f"SELECT * FROM tbl_project WHERE id = {project_id}")
             ).fetchone()
-            results["project_exists"] = "YES" if proj else "NO"
+            out["project_exists"] = "YES" if proj else "NO"
 
-            # 3. Count site_noMl entries
+            # check site_noMl rows
             try:
-                site_count = conn.execute(
-                    text(f"SELECT COUNT(*) FROM site_noMl WHERE project_id = {project_id}")
+                cnt = conn.execute(
+                    text(f"SELECT COUNT(*) FROM site_noMl WHERE project_id={project_id}")
                 ).scalar()
-                results["site_noMl_count"] = int(site_count)
+                out["site_noMl_count"] = cnt
             except Exception as e:
-                results["site_noMl_error"] = str(e)
+                out["site_noMl_error"] = str(e)
 
-        return jsonify(results), 200
+        return jsonify(out), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
