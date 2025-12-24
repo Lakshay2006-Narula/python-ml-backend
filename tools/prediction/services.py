@@ -243,269 +243,267 @@ def mark_indoor(points_df: pd.DataFrame, bld: pd.DataFrame) -> pd.DataFrame:
 # -------------------------------------------------------------------
 def run_prediction_pipeline(
     db_connection,
-    project_id: str, 
+    project_id: str,
     session_ids: List[str],
     outdir: str,
     indoor_mode: str = "heuristic",
     pixel_size_meters: float = 22.0
 ):
+    # Ensure output directory exists
     os.makedirs(outdir, exist_ok=True)
-    
-    if not session_ids:
-        raise RuntimeError("No Session_ids provided.")
-        
-    # 1. Load Site Data
-    # 🟢 FIX: Use 'site_noMl' (Exact match from your DB list)
-    site_query = f"SELECT * FROM `site_noMl` WHERE project_id = '{project_id}'"
-    
-    try:
-        site_df = pd.read_sql(site_query, db_connection)
-    except Exception as e:
-        raise RuntimeError(f"Could not load site data from table 'site_noMl'. Error: {e}")
 
+    # -------------------------------
+    # 1) VALIDATE SESSIONS HAVE GPS
+    # -------------------------------
+    valid_sessions = []
+    invalid_sessions = []
+
+    for sid in session_ids:
+        gps_check_sql = f"""
+            SELECT COUNT(*) AS c 
+            FROM tbl_network_log 
+            WHERE session_id = '{sid}'
+            AND lat IS NOT NULL 
+            AND lon IS NOT NULL
+        """
+        cnt = pd.read_sql(gps_check_sql, db_connection)["c"].iloc[0]
+
+        if cnt > 0:
+            valid_sessions.append(str(sid))
+        else:
+            invalid_sessions.append(str(sid))
+
+    # ❌ No valid sessions → stop here
+    if not valid_sessions:
+        raise RuntimeError(
+            f"None of the provided session_ids contain GPS lat/lon.\n"
+            f"Invalid sessions: {invalid_sessions}"
+        )
+
+    print(f"VALID sessions used: {valid_sessions}")
+    print(f"IGNORED sessions (no GPS): {invalid_sessions}")
+
+    # -------------------------------
+    # 2) LOAD SITE DATA
+    # -------------------------------
+    site_query = f"SELECT * FROM site_noMl WHERE project_id = '{project_id}'"
+
+    site_df = pd.read_sql(site_query, db_connection)
     site_df = standardize_latlon(normcols(site_df))
-    
-    # 🔴 CRITICAL CHECK: If this is empty, Prediction cannot run.
+
     if site_df.empty:
-        raise RuntimeError(f"No site data found in 'site_noMl' for project_id: {project_id}. You MUST re-run the 'Process Session' (Upload) step successfully before predicting.")
+        raise RuntimeError(
+            f"No site entries found in site_noMl for project_id={project_id}"
+        )
 
-    # 2. Load Drive Test (Training) Data
-    session_ids_sql_str = ", ".join([f"'{s}'" for s in session_ids])
-    drive_query = f"SELECT * FROM `tbl_network_log` WHERE session_id IN ({session_ids_sql_str}) AND (rsrp IS NOT NULL OR rsrq IS NOT NULL OR sinr IS NOT NULL)"
-    dt_df = pd.read_sql(drive_query, db_connection)
+    # Remove rows without lat/lon
+    site_df = site_df.dropna(subset=["lat", "lon"])
+    if site_df.empty:
+        raise RuntimeError("Site table exists but contains no valid lat/lon entries.")
+
+    # -------------------------------
+    # 3) LOAD DRIVE TEST DATA
+    # -------------------------------
+    valid_sql = ", ".join([f"'{s}'" for s in valid_sessions])
+
+    drive_sql = f"""
+        SELECT *
+        FROM tbl_network_log
+        WHERE session_id IN ({valid_sql})
+        AND (rsrp IS NOT NULL OR rsrq IS NOT NULL OR sinr IS NOT NULL)
+    """
+
+    dt_df = pd.read_sql(drive_sql, db_connection)
     dt_df = standardize_latlon(normcols(dt_df))
-    if dt_df.empty:
-        raise RuntimeError(f"No drive test data found for session_ids: {session_ids_sql_str}")
 
-    # 3. Load Test (Pixel) Data
+    # Remove missing lat/lon
+    dt_core = dt_df.dropna(subset=["lat", "lon"])
+
+    if dt_core.empty:
+        raise RuntimeError(
+            f"Drive test contains NO valid lat/lon points after cleaning.\n"
+            f"Valid sessions tried: {valid_sessions}"
+        )
+
+    # --------------------------------------------------
+    # 4) BUILD WORK_SITE TABLE FOR NEAREST NEIGHBORS
+    # --------------------------------------------------
+    site_name_col = next((c for c in ["site_key_inferred", "site", "cellname"] if c in site_df.columns), None)
+    sector_col = next((c for c in ["sector", "sector_id", "cell_index"] if c in site_df.columns), None)
+    az_col = next((c for c in ["azimuth_deg_5", "azimuth", "az"] if c in site_df.columns), None)
+
+    work_site = site_df.copy()
+    work_site["azimuth"] = pd.to_numeric(work_site[az_col], errors="coerce").fillna(0.0) if az_col else 0.0
+    work_site["SiteName"] = work_site[site_name_col].astype(str) if site_name_col else np.arange(len(work_site)).astype(str)
+    work_site["sector"] = work_site[sector_col] if sector_col else 1
+
+    # 🚨 MUST HAVE AT LEAST ONE SITE
+    if len(work_site) == 0:
+        raise RuntimeError("work_site dataframe is empty — cannot run prediction.")
+
+    # --------------------------------------------------
+    # 5) MATCH DRIVE TEST WITH SITES
+    # --------------------------------------------------
+    dt_matched = fast_match(work_site, dt_core[["lat", "lon"]])
+    dt_core = pd.concat([dt_core.reset_index(drop=True), dt_matched.reset_index(drop=True)], axis=1)
+
+    # Add distance-based features
+    dt_core["log10_dist"] = np.log10(np.maximum(dt_core["dist_m"], 1.0))
+    dt_core["angle_gain"] = np.cos(np.radians(dt_core["delta_az"])).clip(lower=0)
+
+    # --------------------------------------------------
+    # 6) HANDLE MISSING TEST GRID
+    # If test_df empty → auto-generate grid around DT data
+    # --------------------------------------------------
     test_query = f"""
         SELECT t1.lat, t1.lon, t1.band, t1.network, t1.pci
-        FROM `tbl_network_log` t1 
-        JOIN `tbl_savepolygon` t2 ON t1.polygon_id = t2.id 
+        FROM tbl_network_log t1
+        JOIN tbl_savepolygon t2 ON t1.polygon_id = t2.id
         WHERE t2.project_id = '{project_id}' AND t1.rsrp IS NULL
     """
     test_df = pd.read_sql(test_query, db_connection)
     test_df = standardize_latlon(normcols(test_df))
-    
+
     if test_df.empty:
-        # Calculate bounds with a small buffer
-        min_lat = dt_df['lat'].min() - 0.0005 
-        max_lat = dt_df['lat'].max() + 0.0005
-        min_lon = dt_df['lon'].min() - 0.0005
-        max_lon = dt_df['lon'].max() + 0.0005
-        
-        # 1 degree lat approx 111,111 meters
+        # Auto-generate prediction grid
+        min_lat = dt_core["lat"].min() - 0.0005
+        max_lat = dt_core["lat"].max() + 0.0005
+        min_lon = dt_core["lon"].min() - 0.0005
+        max_lon = dt_core["lon"].max() + 0.0005
+
+        # Convert meters → degrees
         step_lat = pixel_size_meters / 111111.0
-        
-        # cos(lat) adjustment is needed because longitude lines get closer at poles
         avg_lat_rad = np.radians((min_lat + max_lat) / 2)
         step_lon = pixel_size_meters / (111111.0 * np.cos(avg_lat_rad))
-        # -----------------------------
 
         lat_steps = np.arange(min_lat, max_lat, step_lat)
         lon_steps = np.arange(min_lon, max_lon, step_lon)
+
+        # 🚨 If grid empty → FAIL HERE
+        if len(lat_steps) == 0 or len(lon_steps) == 0:
+            raise RuntimeError(
+                "Failed to auto-build prediction grid. Check if drive test GPS variance is too small."
+            )
+
         gv_lat, gv_lon = np.meshgrid(lat_steps, lon_steps)
-        
+
         test_df = pd.DataFrame({
             "lat": gv_lat.ravel(),
-            "lon": gv_lon.ravel()
+            "lon": gv_lon.ravel(),
+            "band": "unknown",
+            "network": "unknown",
+            "pci": "unknown",
         })
-        test_df['band'] = "unknown"
-        test_df['network'] = "unknown"
-        test_df['pci'] = "unknown"
 
-    # 4. Load Building Data
-    try:
-        bld_query = f"SELECT * FROM `tbl_savepolygon` WHERE project_id = '{project_id}'"
-        bld_df = pd.read_sql(bld_query, db_connection)
-        if not bld_df.empty:
-            bld_df = load_buildings_from_df(bld_df)
-        else:
-            bld_df = None
-    except Exception:
-        bld_df = None
-    
-    site_name_col = next((c for c in ["site_key_inferred", "site","cellname"] if c in site_df.columns), None)
-    sector_col    = next((c for c in ["sector", "sector_id","cell_index"] if c in site_df.columns), None)
-    az_col        = next((c for c in ["azimuth_deg_5", "azimuth","az"] if c in site_df.columns), None)
+    # --------------------------------------------------
+    # 7) MATCH TEST POINTS WITH SITES
+    # --------------------------------------------------
+    test_match = fast_match(work_site, test_df[["lat", "lon"]])
+    test_df = pd.concat([test_df.reset_index(drop=True), test_match.reset_index(drop=True)], axis=1)
 
-    site_df = site_df.dropna(subset=["lat","lon"]).copy()
-    work_site = site_df.copy()
-    work_site["azimuth"]  = pd.to_numeric(work_site[az_col], errors="coerce").fillna(0.0) if az_col else 0.0
-    work_site["SiteName"] = work_site[site_name_col].astype(str) if site_name_col else np.arange(len(work_site)).astype(str)
-    work_site["sector"]   = work_site[sector_col] if sector_col else 1
+    # Additional features
+    test_df["log10_dist"] = np.log10(np.maximum(test_df["dist_m"], 1.0))
+    test_df["angle_gain"] = np.cos(np.radians(test_df["delta_az"])).clip(lower=0)
 
-    dt_core = dt_df.dropna(subset=["lat","lon"]).copy()
-    for c in ["earfcn","band","pci","network"]:
-        if c not in dt_core.columns:
-            dt_core[c] = np.nan
-            
-    if "speed_(km/h)" in dt_core.columns:
-        dt_core["speed"] = pd.to_numeric(dt_core["speed_(km/h)"], errors="coerce")
-    elif "speed" in dt_core.columns:
-        dt_core["speed"] = pd.to_numeric(dt_core["speed"], errors="coerce")
-    else:
-        dt_core["speed"] = np.nan
+    # --------------------------------------------------
+    # 8) TRAIN MODELS (RSRP/RSRQ/SINR)
+    # --------------------------------------------------
+    num_features = [
+        "dl_freq_mhz", "log10_dist", "dist_m", "angle_gain",
+        "delta_az", "bearing_tx_to_ue", "site_lat", "site_lon",
+        "lat", "lon", "is_indoor", "est_indoor_loss_db"
+    ]
 
-    TARGETS = [t for t in ["rsrp","rsrq","sinr"] if t in dt_core.columns]
-    if not TARGETS:
-        raise RuntimeError("Drive-test data must include at least one of rsrp, rsrq, sinr.")
+    cat_features = ["band", "network", "pci", "best_site", "best_sector"]
 
-    matched = fast_match(work_site, dt_core[["lat","lon"]])
-    dt_core = pd.concat([dt_core.reset_index(drop=True), matched.reset_index(drop=True)], axis=1)
-    dt_core["log10_dist"]  = np.log10(np.maximum(dt_core["dist_m"], 1.0))
-    dt_core["angle_gain"]  = np.cos(np.radians(dt_core["delta_az"])).clip(lower=0)
-    
-    def rough_dl_freq_mhz(row):
-        if row.get("downlink_frequency") and not pd.isna(row["downlink_frequency"]):
-            try: return float(row["downlink_frequency"])
-            except Exception: pass
-        if row.get("earfcn") and not pd.isna(row["earfcn"]):
-            try:
-                earfcn = float(row["earfcn"])
-                if earfcn < 600:    return 2110 + (earfcn * 0.1)
-                elif earfcn < 1200: return 1930 + (earfcn - 600) * 0.1
-                elif earfcn < 1950: return 1805 + (earfcn - 1200) * 0.1
-                else:               return 700  + (earfcn - 5000) * 0.1
-            except Exception: return np.nan
-        return np.nan
-    dt_core["dl_freq_mhz"] = dt_core.apply(rough_dl_freq_mhz, axis=1)
+    # Build indoor labels
+    dt_core["is_indoor"] = 0
+    dt_core["est_indoor_loss_db"] = 0.0
 
-    for c in ["band","network","pci","best_site","best_sector"]:
-        if c in dt_core.columns:
-            dt_core[c] = dt_core[c].astype(str)
+    # Select target KPIs
+    TARGETS = [t for t in ["rsrp", "rsrq", "sinr"] if t in dt_core.columns]
 
-    if bld_df is not None:
-        ind_train = mark_indoor(dt_core[["lat","lon"]].copy(), bld_df)
-        dt_core["is_indoor"] = ind_train["is_indoor"]
-        dt_core["est_indoor_loss_db"] = ind_train["est_indoor_loss_db"]
-    else:
-        dt_core["is_indoor"] = 0
-        dt_core["est_indoor_loss_db"] = 0.0
+    models = {}
 
-    num_features = [f for f in ["dl_freq_mhz","log10_dist","dist_m","angle_gain","delta_az","bearing_tx_to_ue","site_lat","site_lon","lat","lon","is_indoor","est_indoor_loss_db"] if f in dt_core.columns]
-    cat_features = ["band","network","pci","best_site","best_sector"]
-    
-    models, metrics = {}, {}
     for tgt in TARGETS:
         y = pd.to_numeric(dt_core[tgt], errors="coerce")
         valid = y.notna()
-        X = dt_core.loc[valid, num_features + cat_features].copy()
+
+        X = dt_core.loc[valid, num_features + cat_features]
         y = y.loc[valid]
-        if tgt.upper() in KPI_RANGES:
-            lo, hi = KPI_RANGES[tgt.upper()]
-            y = y.clip(lower=lo, upper=hi)
-            
-        X, y = shuffle(X, y, random_state=42)
-        
+
+        if X.empty:
+            raise RuntimeError(f"No valid training samples for {tgt}")
+
+        # Build full ML pipeline
         preprocess = build_preprocess(num_features, cat_features)
-        reg  = make_regressor()
+        reg = make_regressor()
         pipe = Pipeline(steps=[("prep", preprocess), ("reg", reg)])
-        
-        kf = KFold(n_splits=5, shuffle=True, random_state=42)
-        r2s, rmses = [], []
-        for tr, va in kf.split(X):
-            Xtr, Xva = X.iloc[tr], X.iloc[va]
-            ytr, yva = y.iloc[tr], y.iloc[va]
-            pipe.fit(Xtr, ytr)
-            p = pipe.predict(Xva)
-            r2s.append(r2_score(yva, p))
-            rmses.append(mean_squared_error(yva, p))
-        metrics[tgt] = {"R2_mean": float(np.mean(r2s)), "R2_std":  float(np.std(r2s)),
-                        "RMSE_mean": float(np.mean(rmses)), "RMSE_std":  float(np.std(rmses)),
-                        "n_samples": int(len(y))}
+
         pipe.fit(X, y)
         models[tgt] = pipe
-        joblib.dump(pipe, os.path.join(outdir, f"trained_model_{tgt}.joblib"))
 
-    with open(os.path.join(outdir, "model_metrics.json"), "w") as f:
-        json.dump(metrics, f, indent=2)
+    # --------------------------------------------------
+    # 9) PREDICT FOR TEST GRID
+    # --------------------------------------------------
+    out = test_df.copy()
 
-    test_pts = test_df.dropna(subset=["lat","lon"]).copy()
-    tmatch   = fast_match(work_site, test_pts[["lat","lon"]])
-    test_pts = pd.concat([test_pts.reset_index(drop=True), tmatch.reset_index(drop=True)], axis=1)
-    test_pts["log10_dist"] = np.log10(np.maximum(test_pts["dist_m"], 1.0))
-    test_pts["angle_gain"] = np.cos(np.radians(test_pts["delta_az"])).clip(lower=0)
-    for c in ["band","network","pci","best_site","best_sector"]:
-        if c not in test_pts.columns: test_pts[c] = "unknown"
-        test_pts[c] = test_pts[c].astype(str)
-    
-    if "dl_freq_mhz" not in test_pts.columns:
-        test_pts["dl_freq_mhz"] = np.nan
-
-    if bld_df is not None:
-        ind_test = mark_indoor(test_pts[["lat","lon"]].copy(), bld_df)
-        test_pts["is_indoor"] = ind_test["is_indoor"]
-        test_pts["est_indoor_loss_db"] = ind_test["est_indoor_loss_db"]
-    else:
-        test_pts["is_indoor"] = 0
-        test_pts["est_indoor_loss_db"] = 0.0
-
-    out = test_pts[["lat","lon","best_site","best_sector","dist_m","delta_az","angle_gain","is_indoor","est_indoor_loss_db"]].copy()
-    
-    out['band'] = test_pts['band']
-    out['network'] = test_pts['network']
-    out['pci'] = test_pts['pci']
-    out['earfcn'] = test_pts['dl_freq_mhz']
-    
     for tgt, pipe in models.items():
         expected_cols = num_features + cat_features
+
+        # Fill missing columns
         for col in expected_cols:
-            if col not in test_pts.columns:
-                if col in num_features:
-                    test_pts[col] = 0.0 
-                else:
-                    test_pts[col] = "unknown" 
-        
-        pred = pipe.predict(test_pts[expected_cols].copy())
+            if col not in out.columns:
+                out[col] = 0.0 if col in num_features else "unknown"
 
-        tgt_upper = tgt.upper()
+        pred = pipe.predict(out[expected_cols])
+
+        # Clamp values
+        if tgt.upper() in KPI_RANGES:
+            pred = clamp_array(pred, tgt.upper())
+
+        # Indoor correction
         if indoor_mode == "heuristic":
-            loss = test_pts["est_indoor_loss_db"].fillna(0.0).values
-            is_in = test_pts["is_indoor"].values.astype(int)
-            if tgt_upper == "RSRP": pred = pred - (loss * is_in)
-            elif tgt_upper == "RSRQ": pred = pred - np.minimum(3.0, loss * 0.15) * is_in
-            elif tgt_upper == "SINR": pred = pred - np.minimum(10.0, loss * 0.6) * is_in
-        if tgt_upper in KPI_RANGES:
-            pred = clamp_array(pred, tgt_upper)
-            
-        out[f"pred_{tgt}"] = pred 
+            loss = out["est_indoor_loss_db"].fillna(0.0).values
+            is_in = out["is_indoor"].values.astype(int)
 
-    out_to_db = pd.DataFrame({
-        "tbl_project_id": int(project_id), # This maps to 'tbl_project' foreign key
+            if tgt == "rsrp":
+                pred = pred - (loss * is_in)
+            elif tgt == "rsrq":
+                pred = pred - np.minimum(3.0, loss * 0.15) * is_in
+            elif tgt == "sinr":
+                pred = pred - np.minimum(10.0, loss * 0.6) * is_in
+
+        out[f"pred_{tgt}"] = pred
+
+    # Prepare DB output
+    final_out = pd.DataFrame({
+        "tbl_project_id": int(project_id),
         "lat": out["lat"],
         "lon": out["lon"],
         "rsrp": out.get("pred_rsrp", np.nan),
         "rsrq": out.get("pred_rsrq", np.nan),
         "sinr": out.get("pred_sinr", np.nan),
-        "serving_cell": out.get("best_site", "unknown"),
+        "serving_cell": out["best_site"],
+        "band": out["band"],
+        "earfcn": out["dl_freq_mhz"],
+        "pci": out["pci"],
+        "network": out["network"],
         "azimuth": np.nan,
         "tx_power": np.nan,
         "height": np.nan,
-        "band": out.get("band", "unknown"),
-        "earfcn": out.get("earfcn", np.nan),
         "reference_signal_power": np.nan,
-        "pci": out.get("pci", "unknown"),
         "mtilt": np.nan,
         "etilt": np.nan,
-        "network": out.get("network", "unknown")
     })
 
-    final_db_columns = [
-        "tbl_project_id", "lat", "lon", "rsrp", "rsrq", "sinr",
-        "serving_cell", "azimuth", "tx_power", "height",
-        "band", "earfcn", "reference_signal_power", "pci",
-        "mtilt", "etilt", "network"
-    ]
-
-    final_out_to_db = out_to_db[final_db_columns]
-
-    final_out_to_db.to_sql(
-        name='tbl_prediction_data',
-        con=db_connection, 
-        if_exists='append',
+    # Save to DB
+    final_out.to_sql(
+        name="tbl_prediction_data",
+        con=db_connection,
+        if_exists="append",
         index=False,
-        method='multi'
+        method="multi"
     )
 
-    return outdir, len(final_out_to_db)
+    return outdir, len(final_out)
