@@ -326,10 +326,9 @@ def run_noml(
     # 🔥 FIXED SITE MERGING BLOCK (this is where your crash happened)
     # ================================================================
 
-    # Safety: remove MultiIndex before merging
+    # Prevent MultiIndex issues
     pred_first = pred_first.copy()
-    if isinstance(pred_first.index, pd.MultiIndex):
-        pred_first.reset_index(inplace=True)
+    pred_first.reset_index(drop=True, inplace=True)
 
     site_group_cols = []
     if "network" in pred_first.columns:
@@ -342,17 +341,14 @@ def run_noml(
 
         pred_first["_w"] = pred_first["samples"].clip(lower=1)
 
-        gb = pred_first.groupby(site_group_cols)
+        # SAFE: use groupby().agg() instead of apply + reset_index
+        site_centroids = pred_first.groupby(site_group_cols).agg(
+            latitude=("lat_pred_firstcut", lambda s: float(np.average(s, weights=pred_first.loc[s.index, "_w"]))),
+            longitude=("lon_pred_firstcut", lambda s: float(np.average(s, weights=pred_first.loc[s.index, "_w"]))),
+            sector_count=("samples", "count")
+        ).reset_index()
 
-        # FIX → use reset_index(drop=False)
-        site_centroids = gb.apply(
-            lambda g: pd.Series({
-                "latitude": float(np.average(g["lat_pred_firstcut"], weights=g["_w"])),
-                "longitude": float(np.average(g["lon_pred_firstcut"], weights=g["_w"])),
-                "sector_count": len(g)
-            })
-        ).reset_index(drop=False)
-
+        # Merge with no duplicate columns
         pred_first = pred_first.merge(site_centroids, on=site_group_cols, how="left")
 
     else:
@@ -360,7 +356,7 @@ def run_noml(
         pred_first["longitude"] = pred_first["lon_pred_firstcut"]
         pred_first["sector_count"] = 1
 
-    # ================================================================
+    # ================= END SAFE BLOCK =====================
 
     # Azimuth estimation
     az_rows = []
