@@ -193,6 +193,7 @@ def create_block_grid(mask_polygon, cell_size_m):
     grid["block_id"] = grid.index + 1
     return grid
 
+# --- CHANGED: Logic to accept dynamic target/min/max from Routes ---
 def create_ai_zones(mask_polygon, buildings_gdf, target=200, min_zones=10, max_zones=80):
     if buildings_gdf.empty: return gpd.GeoDataFrame()
 
@@ -203,7 +204,9 @@ def create_ai_zones(mask_polygon, buildings_gdf, target=200, min_zones=10, max_z
     coords = np.array([[p.x, p.y] for p in buildings_utm.geometry.centroid])
     if len(coords) < 10: return gpd.GeoDataFrame()
 
+    # Dynamic calculation using the passed parameters
     k_est = max(min_zones, min(max_zones, len(coords) // target))
+    
     kmeans = KMeans(n_clusters=k_est, random_state=42, n_init="auto").fit(coords)
     
     region_polys, _ = voronoi_regions_from_coords(kmeans.cluster_centers_, mask_utm.geometry.iloc[0])
