@@ -69,7 +69,7 @@ def save_to_database(gdf, table_name, project_id, name):
     except Exception as e:
         print(f"❌ Database Error for {table_name}: {e}")
 
-# ================== DB FETCH FUNCTION (NEW) ==================
+# ================== DB FETCH FUNCTION ==================
 def get_project_data(project_id):
     """
     Fetches data from all three tables for a specific project_id.
@@ -138,7 +138,6 @@ def fetch_buildings(mask_polygon):
             buildings = buildings.to_crs("EPSG:4326")
     return buildings
 
-# --- CHANGED: Added min_samples argument ---
 def cluster_buildings_to_polygons(buildings_gdf, mask_polygon, min_samples=DEFAULT_MIN_SAMPLES):
     if buildings_gdf.empty:
         return gpd.GeoDataFrame(columns=["cluster_id", "geometry"], geometry="geometry", crs="EPSG:4326")
@@ -147,7 +146,6 @@ def cluster_buildings_to_polygons(buildings_gdf, mask_polygon, min_samples=DEFAU
     buildings_utm = buildings_gdf.to_crs(utm_crs)
     coords = np.array([[p.x, p.y] for p in buildings_utm.geometry.centroid])
 
-    # --- CHANGED: Using the passed min_samples argument ---
     db = DBSCAN(eps=BUILDING_CLUSTER_EPS_METERS, min_samples=min_samples).fit(coords)
     labels = db.labels_
 
@@ -193,7 +191,6 @@ def create_block_grid(mask_polygon, cell_size_m):
     grid["block_id"] = grid.index + 1
     return grid
 
-# --- CHANGED: Logic to accept dynamic target/min/max from Routes ---
 def create_ai_zones(mask_polygon, buildings_gdf, target=200, min_zones=10, max_zones=80):
     if buildings_gdf.empty: return gpd.GeoDataFrame()
 
@@ -204,7 +201,7 @@ def create_ai_zones(mask_polygon, buildings_gdf, target=200, min_zones=10, max_z
     coords = np.array([[p.x, p.y] for p in buildings_utm.geometry.centroid])
     if len(coords) < 10: return gpd.GeoDataFrame()
 
-    # Dynamic calculation using the passed parameters
+    # Reverted to original calculation
     k_est = max(min_zones, min(max_zones, len(coords) // target))
     
     kmeans = KMeans(n_clusters=k_est, random_state=42, n_init="auto").fit(coords)
