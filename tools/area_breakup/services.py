@@ -146,6 +146,7 @@ def cluster_buildings_to_polygons(buildings_gdf, mask_polygon, min_samples=DEFAU
     buildings_utm = buildings_gdf.to_crs(utm_crs)
     coords = np.array([[p.x, p.y] for p in buildings_utm.geometry.centroid])
 
+    # Standard DBSCAN using the passed min_samples
     db = DBSCAN(eps=BUILDING_CLUSTER_EPS_METERS, min_samples=min_samples).fit(coords)
     labels = db.labels_
 
@@ -191,6 +192,7 @@ def create_block_grid(mask_polygon, cell_size_m):
     grid["block_id"] = grid.index + 1
     return grid
 
+# --- REVERTED: Uses default parameters for calculation ---
 def create_ai_zones(mask_polygon, buildings_gdf, target=200, min_zones=10, max_zones=80):
     if buildings_gdf.empty: return gpd.GeoDataFrame()
 
@@ -201,7 +203,7 @@ def create_ai_zones(mask_polygon, buildings_gdf, target=200, min_zones=10, max_z
     coords = np.array([[p.x, p.y] for p in buildings_utm.geometry.centroid])
     if len(coords) < 10: return gpd.GeoDataFrame()
 
-    # Reverted to original calculation
+    # Original Logic: Calculate K based on building count / target (200)
     k_est = max(min_zones, min(max_zones, len(coords) // target))
     
     kmeans = KMeans(n_clusters=k_est, random_state=42, n_init="auto").fit(coords)
