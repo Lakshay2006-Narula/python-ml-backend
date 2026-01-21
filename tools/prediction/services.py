@@ -451,7 +451,8 @@ def run_prediction_pipeline(
         con=db_connection,
         index=False,
         if_exists="append",
-        method="multi"
+        method="multi",
+        chunksize=1000 # <--- ADD THIS! Writes 1000 rows at a time
     )
 
     return outdir, len(final_out)
