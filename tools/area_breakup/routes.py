@@ -23,14 +23,8 @@ def process_data():
         project_id = data.get("project_id")
         block_size = float(data.get("grid", 100))
         
-        # --- PARAMS FOR CLUSTERING ---
+        # Keep min_samples as it was part of the base logic previously
         min_samples = int(data.get("min_samples", 10))
-
-        # --- PARAMS FOR AI ZONES (Dynamic Config) ---
-        # Defaults: target=200 buildings/zone, min=10 zones, max=80 zones
-        ai_target = int(data.get("ai_target", 200)) 
-        ai_min_zones = int(data.get("ai_min_zones", 10))
-        ai_max_zones = int(data.get("ai_max_zones", 80))
 
         if not wkt_string:
             return jsonify({"status": "error", "message": "WKT is required"}), 400
@@ -60,14 +54,8 @@ def process_data():
         g_buildings = fetch_buildings(mask_polygon)
         if not g_buildings.empty:
             
-            # 3. PROCESS AI ZONES (Pass dynamic params)
-            g_ai_zones = create_ai_zones(
-                mask_polygon, 
-                g_buildings, 
-                target=ai_target, 
-                min_zones=ai_min_zones, 
-                max_zones=ai_max_zones
-            )
+            # 3. PROCESS AI ZONES (Reverted to simple call)
+            g_ai_zones = create_ai_zones(mask_polygon, g_buildings)
             
             if not g_ai_zones.empty:
                 save_to_database(g_ai_zones, "output_ai_zones", project_id, name)
@@ -88,10 +76,7 @@ def process_data():
             "details": results_summary,
             "parameters": {
                 "grid_size": block_size,
-                "min_samples": min_samples,
-                "ai_target": ai_target,
-                "ai_min_zones": ai_min_zones,
-                "ai_max_zones": ai_max_zones
+                "min_samples": min_samples
             }
         })
 
@@ -118,7 +103,7 @@ def fetch_data(project_id):
         count_grid = len(data.get("grid_blocks", []))
         count_zones = len(data.get("ai_zones", []))
         
-        # FIX: Return 200 OK even if empty, to stop frontend crash
+        # Return 200 OK even if empty (Fixing the frontend crash issue)
         if count_grid == 0 and count_zones == 0:
             return jsonify({
                 "status": "success",
