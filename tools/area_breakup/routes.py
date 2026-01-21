@@ -23,10 +23,14 @@ def process_data():
         project_id = data.get("project_id")
         block_size = float(data.get("grid", 100))
         
-        # --- CHANGED: Extract min_samples from input (Default to 10) ---
-        # The user can pass "min_samples" in the JSON to control clustering
+        # --- PARAMS FOR CLUSTERING ---
         min_samples = int(data.get("min_samples", 10))
-        # -----------------------------------------------------------------
+
+        # --- PARAMS FOR AI ZONES (Dynamic Config) ---
+        # Defaults: target=200 buildings/zone, min=10 zones, max=80 zones
+        ai_target = int(data.get("ai_target", 200)) 
+        ai_min_zones = int(data.get("ai_min_zones", 10))
+        ai_max_zones = int(data.get("ai_max_zones", 80))
 
         if not wkt_string:
             return jsonify({"status": "error", "message": "WKT is required"}), 400
@@ -56,15 +60,21 @@ def process_data():
         g_buildings = fetch_buildings(mask_polygon)
         if not g_buildings.empty:
             
-            # 3. PROCESS AI ZONES
-            g_ai_zones = create_ai_zones(mask_polygon, g_buildings)
+            # 3. PROCESS AI ZONES (Pass dynamic params)
+            g_ai_zones = create_ai_zones(
+                mask_polygon, 
+                g_buildings, 
+                target=ai_target, 
+                min_zones=ai_min_zones, 
+                max_zones=ai_max_zones
+            )
+            
             if not g_ai_zones.empty:
                 save_to_database(g_ai_zones, "output_ai_zones", project_id, name)
                 files = export_files(g_ai_zones, f"{name}_ai_zones")
                 results_summary.append(f"AI Zones: {len(g_ai_zones)} zones saved. Files: {files}")
 
             # 4. PROCESS CLUSTERS
-            # --- CHANGED: Passing the user-defined min_samples here ---
             g_clusters = cluster_buildings_to_polygons(g_buildings, mask_polygon, min_samples=min_samples)
             if not g_clusters.empty:
                 save_to_database(g_clusters, "output_building_clusters", project_id, name)
@@ -78,7 +88,10 @@ def process_data():
             "details": results_summary,
             "parameters": {
                 "grid_size": block_size,
-                "min_samples": min_samples
+                "min_samples": min_samples,
+                "ai_target": ai_target,
+                "ai_min_zones": ai_min_zones,
+                "ai_max_zones": ai_max_zones
             }
         })
 
@@ -91,7 +104,6 @@ def process_data():
 def fetch_data(project_id):
     """
     API to get saved data for a specific Project ID.
-    Usage: GET /api/area-breakup/fetch/100
     """
     try:
         data = get_project_data(project_id)
@@ -106,12 +118,17 @@ def fetch_data(project_id):
         count_grid = len(data.get("grid_blocks", []))
         count_zones = len(data.get("ai_zones", []))
         
+        # FIX: Return 200 OK even if empty, to stop frontend crash
         if count_grid == 0 and count_zones == 0:
             return jsonify({
                 "status": "success",
                 "message": f"No data found for project_id: {project_id}",
-                "data": {}
-            }), 404
+                "data": {
+                    "grid_blocks": [],
+                    "ai_zones": [],
+                    "building_clusters": []
+                }
+            }), 200
 
         return jsonify({
             "status": "success",
