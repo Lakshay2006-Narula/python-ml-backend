@@ -17,54 +17,41 @@ area_breakup_bp = Blueprint('area_breakup', __name__)
 # ================== HELPER: SMART WKT PARSER ==================
 def clean_and_load_wkt(raw_string):
     """
-    1. Adds 'POLYGON' if missing (e.g., input is just ((...))).
-    2. Detects Swapped Coordinates (Lat/Lon) and fixes them to (Lon/Lat).
+    Returns: (geometry, was_swapped)
+    was_swapped = True if we detected Lat/Lon input and flipped it to Lon/Lat.
     """
     if not raw_string:
         raise ValueError("WKT string is empty")
 
-    # 1. Fix missing 'POLYGON' prefix
     clean_str = raw_string.strip()
     if not clean_str.upper().startswith("POLYGON"):
-        # If it starts with ((, assume it's a polygon
         if clean_str.startswith("(("):
             clean_str = f"POLYGON {clean_str}"
         else:
             raise ValueError("Input must be a POLYGON or ((...))")
 
-    # Load Geometry
     poly_geom = wkt.loads(clean_str)
-
-    # 2. Check bounds to detect Lat/Lon swap
     min_x, min_y, max_x, max_y = poly_geom.bounds
-    
-    # Logic: 
-    # - Latitude (Y) must be between -90 and 90.
-    # - If Y is > 90, user definitely sent Longitude as Y. -> SWAP.
-    # - If X is < 40 and Y > 60 (Specific check for users pasting Lat/Lon near India/Taiwan) -> SWAP.
-    #   (This heuristic assumes you aren't actually mapping the Arctic Ocean)
     
     needs_swap = False
     
+    # 1. Strict Check: Latitude > 90 is impossible, so it must be Longitude.
     if min_y < -90 or max_y > 90:
         needs_swap = True
-    elif (min_x > -60 and max_x < 60) and (min_y > 60): 
-        # Heuristic: If X is small (Europe/Africa Lon) and Y is huge (Arctic Lat)
-        # But user meant Lat ~28, Lon ~77 (India) -> The logic sees 28 as X, 77 as Y.
-        # Wait, 77 is < 90. Standard check won't catch Delhi (28, 77).
-        # We will strictly swap if Y > 90 (Taiwan case).
-        # For Delhi (28, 77), it's ambiguous, but we can't swap safely without risk.
-        pass
-
-    # FORCE SWAP if it looks like Taiwan/China coordinates sent as Lat/Lon
-    if max_y > 90:
+    
+    # 2. Heuristic for India/Asia users: 
+    # If Y (Lat) is > 60 (Arctic) and X (Lon) is small (< 60), 
+    # user likely meant Lat~28 (India) and Lon~77. 
+    # (Because Lat 77 is freezing ocean, Lat 28 is Delhi).
+    elif (min_y > 60 and min_x < 60): 
         needs_swap = True
 
     if needs_swap:
-        print("🔄 Auto-Correcting: Swapping Lat/Lon to Lon/Lat...")
+        print("🔄 Detected Lat/Lon input. Swapping to Lon/Lat for processing...")
         poly_geom = ops.transform(lambda x, y: (y, x), poly_geom)
+        return poly_geom, True # True = We swapped it
 
-    return poly_geom
+    return poly_geom, False # False = Input was already correct
 
 # ================== PROCESS ENDPOINT (POST) ==================
 @area_breakup_bp.route('/process', methods=['POST'])
@@ -80,12 +67,15 @@ def process_data():
         if not wkt_input:
             return jsonify({"status": "error", "message": "WKT is required"}), 400
 
-        # --- SMART PARSING APPLIED HERE ---
+        # --- CAPTURE THE SWAP FLAG ---
         try:
-            poly_geom = clean_and_load_wkt(wkt_input)
+            poly_geom, was_input_swapped = clean_and_load_wkt(wkt_input)
         except Exception as e:
             return jsonify({"status": "error", "message": f"Invalid WKT format: {str(e)}"}), 400
-        # ----------------------------------
+        
+        # If input was Lat/Lon, we want output to be Lat/Lon too.
+        # So we pass 'swap_output=True' to save_to_database.
+        should_swap_output = was_input_swapped 
 
         mask_polygon = gpd.GeoDataFrame(
             {"Name": [name], "project_id": [project_id]}, 
@@ -98,7 +88,7 @@ def process_data():
         # 1. PROCESS GRID
         g_blocks = create_block_grid(mask_polygon, block_size)
         if not g_blocks.empty:
-            save_to_database(g_blocks, "output_grid_blocks", project_id, name)
+            save_to_database(g_blocks, "output_grid_blocks", project_id, name, swap_output=should_swap_output)
             files = export_files(g_blocks, f"{name}_blocks")
             results_summary.append(f"Grid: {len(g_blocks)} blocks saved.")
 
@@ -109,14 +99,14 @@ def process_data():
             # 3. PROCESS AI ZONES
             g_ai_zones = create_ai_zones(mask_polygon, g_buildings)
             if not g_ai_zones.empty:
-                save_to_database(g_ai_zones, "output_ai_zones", project_id, name)
+                save_to_database(g_ai_zones, "output_ai_zones", project_id, name, swap_output=should_swap_output)
                 files = export_files(g_ai_zones, f"{name}_ai_zones")
                 results_summary.append(f"AI Zones: {len(g_ai_zones)} zones saved.")
 
             # 4. PROCESS CLUSTERS
             g_clusters = cluster_buildings_to_polygons(g_buildings, mask_polygon, min_samples=min_samples)
             if not g_clusters.empty:
-                save_to_database(g_clusters, "output_building_clusters", project_id, name)
+                save_to_database(g_clusters, "output_building_clusters", project_id, name, swap_output=should_swap_output)
                 files = export_files(g_clusters, f"{name}_clusters")
                 results_summary.append(f"Clusters: {len(g_clusters)} clusters saved.")
 
@@ -125,10 +115,7 @@ def process_data():
             "project_id": project_id,
             "message": "Processing complete.",
             "details": results_summary,
-            "parameters": {
-                "grid_size": block_size,
-                "min_samples": min_samples
-            }
+            "input_format_detected": "Lat/Lon" if was_input_swapped else "Lon/Lat"
         })
 
     except Exception as e:
@@ -140,30 +127,17 @@ def process_data():
 def fetch_data(project_id):
     try:
         data = get_project_data(project_id)
-        
         if data is None:
-             return jsonify({
-                "status": "error", 
-                "message": "Database connection failed or error executing query."
-            }), 500
+             return jsonify({"status": "error", "message": "Database error"}), 500
 
-        # Return 200 OK even if empty
         if not data.get("grid_blocks") and not data.get("ai_zones"):
             return jsonify({
                 "status": "success",
                 "message": f"No data found for project_id: {project_id}",
-                "data": {
-                    "grid_blocks": [],
-                    "ai_zones": [],
-                    "building_clusters": []
-                }
+                "data": {"grid_blocks": [], "ai_zones": [], "building_clusters": []}
             }), 200
 
-        return jsonify({
-            "status": "success",
-            "project_id": project_id,
-            "data": data
-        }), 200
+        return jsonify({"status": "success", "project_id": project_id, "data": data}), 200
 
     except Exception as e:
         current_app.logger.error(f"Fetch Error: {e}")
