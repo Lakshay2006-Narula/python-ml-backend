@@ -4,13 +4,13 @@ import logging
 import traceback
 import osmnx as ox
 import geopandas as gpd
-from shapely.wkt import loads as wkt_loads
+from shapely import ops # Added ops
 import sqlalchemy as db
 from sqlalchemy.exc import OperationalError
 from flask import current_app
 
 # -------------------------------------
-# GLOBAL ENGINE (same as your working API)
+# GLOBAL ENGINE
 # -------------------------------------
 BASE_DIR = os.getcwd()
 DB_CERT_PATH = os.path.join(BASE_DIR, "ca.pem")
@@ -44,13 +44,6 @@ except Exception as e:
 # -------------------------------------
 class BuildingService:
 
-    def parse_geometry(self, data):
-        """Parse WKT polygon"""
-        wkt = data.get("WKT") or data.get("wkt")
-        if not wkt:
-            raise ValueError("WKT is required")
-        return wkt_loads(wkt)
-
     def fetch_buildings(self, polygon):
         """Fetch buildings from OSM"""
 
@@ -79,15 +72,23 @@ class BuildingService:
             raise e
 
     # -------------------------------------
-    # SAVE TO DATABASE (YOUR OLD WORKING LOGIC)
+    # SAVE TO DATABASE (UPDATED WITH SWAP LOGIC)
     # -------------------------------------
-    def save_buildings_to_db(self, buildings, area_name, project_id):
+    def save_buildings_to_db(self, buildings, area_name, project_id, swap_output=False):
 
         if engine is None:
             raise RuntimeError("Database engine is not initialized")
 
         # EXPLODE MULTIPOLYGONS
         buildings_exp = buildings.explode(index_parts=True, ignore_index=True)
+        
+        # --- SWAP BACK LOGIC (Lon/Lat -> Lat/Lon) ---
+        if swap_output:
+            print(f"🔄 Buildings: Swapping output back to Lat/Lon before saving...")
+            buildings_exp['geometry'] = buildings_exp['geometry'].apply(
+                lambda geom: ops.transform(lambda x, y: (y, x), geom)
+            )
+        # --------------------------------------------
 
         # Convert geometry to WKT
         buildings_exp["wkt_4326"] = buildings_exp.geometry.to_wkt()
@@ -135,27 +136,20 @@ class BuildingService:
         return total
 
     # -------------------------------------
-    # MAIN EXTRACT + SAVE METHOD
+    # MAIN EXTRACT + SAVE METHOD (UPDATED)
     # -------------------------------------
-    def process_buildings(self, data):
+    def process_buildings(self, polygon, name, project_id, swap_output=False):
         """
         Extract buildings and save them to DB
         """
-
-        polygon = self.parse_geometry(data)
+        # Note: 'polygon' is now passed in as a shapely object, not raw data
         buildings, count = self.fetch_buildings(polygon)
 
-        # FIX 🔥
         if buildings is None or buildings.empty:
             return None, 0, 0
 
-        name = data.get("Name")
-        project_id = data.get("project_id")
-
-        if not name or not project_id:
-            raise ValueError("Name and project_id are required for saving")
-
-        saved_count = self.save_buildings_to_db(buildings, name, project_id)
+        # Pass the swap flag to the save function
+        saved_count = self.save_buildings_to_db(buildings, name, project_id, swap_output=swap_output)
 
         geojson = json.loads(buildings.to_json())
 
