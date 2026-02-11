@@ -1,0 +1,221 @@
+"""
+TEST CASE: Dynamic Email Sending (FUTURE VERSION)
+
+This shows how to make email sending dynamic:
+- Fetch user email from user_id in database
+- Fetch project name from project_id
+- Send personalized email to actual user
+
+This is YOUR NEXT STEP after the hardcoded demo works.
+"""
+
+import sys
+sys.path.insert(0, '.')
+
+import smtplib
+from email.message import EmailMessage
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+# SMTP Configuration
+SMTP_HOST = os.getenv("SMTP_HOST")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_USER = os.getenv("SMTP_USER")
+SMTP_PASS = os.getenv("SMTP_PASS")
+BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
+
+
+def get_user_email_from_id(user_id: int) -> dict | None:
+    """
+    Fetch user info from database
+    Returns: {'email': '...', 'full_name': '...', 'username': '...'}
+    """
+    try:
+        from src.db import get_connection
+        
+        cn = get_connection()
+        cur = cn.cursor(dictionary=True)
+        
+        query = """
+        SELECT id, email, full_name, username
+        FROM users
+        WHERE id = %s
+        """
+        
+        cur.execute(query, (user_id,))
+        user = cur.fetchone()
+        cur.close()
+        cn.close()
+        
+        return user
+    except Exception as e:
+        print(f"ERROR fetching user: {e}")
+        return None
+
+
+def get_project_name_from_id(project_id: int) -> str | None:
+    """Fetch project name from database"""
+    try:
+        from src.db import get_connection, get_project_by_id
+        
+        cn = get_connection()
+        project = get_project_by_id(project_id, cn)
+        cn.close()
+        
+        return project.get('name') if project else None
+    except Exception as e:
+        print(f"ERROR fetching project: {e}")
+        return None
+
+
+def send_report_email_dynamic(
+    user_id: int,
+    project_id: int,
+    report_id: str,
+    pdf_path: str
+):
+    """
+    Send email dynamically:
+    - Fetch user email from user_id
+    - Fetch project name from project_id
+    - Send personalized email
+    """
+    
+    print("\n" + "="*80)
+    print("DYNAMIC EMAIL SENDING")
+    print("="*80)
+    
+    # Stage 1: Fetch user info
+    print(f"\n📥 Fetching user info for user_id={user_id}...")
+    user = get_user_email_from_id(user_id)
+    
+    if not user:
+        print(f"   ✗ User not found")
+        return False
+    
+    user_email = user.get('email')
+    user_name = user.get('full_name', user.get('username', 'User'))
+    
+    print(f"   ✓ Found: {user_name} ({user_email})")
+    
+    # Stage 2: Fetch project info
+    print(f"\n📥 Fetching project info for project_id={project_id}...")
+    project_name = get_project_name_from_id(project_id)
+    
+    if not project_name:
+        print(f"   ✗ Project not found")
+        return False
+    
+    print(f"   ✓ Found: {project_name}")
+    
+    # Stage 3: Verify PDF exists
+    print(f"\n📂 Verifying PDF file...")
+    if not os.path.exists(pdf_path):
+        print(f"   ✗ PDF not found at {pdf_path}")
+        return False
+    
+    file_size = os.path.getsize(pdf_path)
+    print(f"   ✓ PDF exists ({file_size} bytes)")
+    
+    # Stage 4: Create email
+    print(f"\n📝 Creating email message...")
+    
+    download_url = f"{BASE_URL}/download/{report_id}"
+    
+    msg = EmailMessage()
+    msg["From"] = SMTP_USER
+    msg["To"] = user_email
+    msg["Subject"] = f"🎉 Drive Test Report Ready – {project_name}"
+    
+    email_body = f"""Hi {user_name},
+
+Your drive test report for {project_name} is ready!
+
+📊 Report Summary:
+   Project: {project_name}
+   Report ID: {report_id}
+   Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+📥 Download Your Report:
+{download_url}
+
+Thank you for using our Network Analytics platform!
+
+Best Regards,
+Network Analytics Team
+"""
+    
+    msg.set_content(email_body)
+    
+    print(f"   ✓ Email prepared")
+    print(f"   To: {user_email}")
+    print(f"   Subject: {msg['Subject']}")
+    
+    # Stage 5: Send email
+    print(f"\n📤 Sending email...")
+    
+    try:
+        if not all([SMTP_HOST, SMTP_USER, SMTP_PASS]):
+            print(f"   ⚠ SMTP not configured")
+            print(f"   ✓ TEST MODE: Email ready to send")
+            return True
+        
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
+        
+        print(f"   ✓ Email sent successfully!")
+        return True
+        
+    except Exception as e:
+        print(f"   ✗ Failed to send: {e}")
+        return False
+
+
+def test_dynamic_email():
+    """Test dynamic email with actual database lookup"""
+    
+    print("\n" + "="*80)
+    print("TEST: DYNAMIC EMAIL SENDING")
+    print("="*80)
+    
+    # Replace these with actual values from your pipeline
+    USER_ID = 1                      # ← Fetch from authenticated user
+    PROJECT_ID = 148                 # ← From project selection
+    REPORT_ID = "0fc5d6dd-9dda-4f99-9627-f6fde7401da1"  # ← Generated by main.py
+    PDF_PATH = r"C:\Users\91832\Desktop\Pdf_Report\data\reports\0fc5d6dd-9dda-4f99-9627-f6fde7401da1\report.pdf"
+    
+    print(f"\nInput Parameters:")
+    print(f"   user_id: {USER_ID}")
+    print(f"   project_id: {PROJECT_ID}")
+    print(f"   report_id: {REPORT_ID}")
+    print(f"   pdf_path: {PDF_PATH}")
+    
+    # Send email
+    success = send_report_email_dynamic(
+        user_id=USER_ID,
+        project_id=PROJECT_ID,
+        report_id=REPORT_ID,
+        pdf_path=PDF_PATH
+    )
+    
+    print("\n" + "="*80)
+    if success:
+        print("✓ TEST PASSED - Dynamic email ready to use!")
+        print("\nNext Steps:")
+        print("1. Add 'email' column to your users table if not already there")
+        print("2. Call this function from main.py after generating report")
+        print("3. Integrate with your user authentication system")
+    else:
+        print("⚠ TEST INCOMPLETE - Check database and email configuration")
+    print("="*80)
+
+
+if __name__ == "__main__":
+    import pandas as pd
+    
+    # Run the dynamic email test
+    test_dynamic_email()

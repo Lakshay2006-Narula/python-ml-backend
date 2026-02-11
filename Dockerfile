@@ -27,6 +27,9 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --default-timeout=1000 --no-cache-dir -r requirements.txt
 
+# 5b. Install Playwright browser binaries (needed for PDF/map rendering)
+RUN python -m playwright install --with-deps chromium
+
 # 6. Copy the rest of the code
 COPY . .
 

@@ -1,0 +1,17 @@
+env/
+.env
+venv/
+__pycache__/
+*.pyc
+data/
+processed/
+
+
+logs/
+models/
+tmp/
+venv
+polygon.txt
+
+tmp_docx_images/
+i

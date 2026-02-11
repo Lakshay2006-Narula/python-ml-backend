@@ -6,6 +6,8 @@ services:
     region: oregon
     plan: starter
     # buildCommand and startCommand are now in the Dockerfile
+    # Playwright install is handled in Dockerfile. If you switch off docker,
+    # add: buildCommand: "pip install -r requirements.txt && playwright install --with-deps chromium"
     envVars:
       - key: FLASK_ENV
         value: production

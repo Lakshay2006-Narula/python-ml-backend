@@ -12,6 +12,7 @@ from tools.prediction.routes import prediction_bp
 # 1. IMPORT THE NEW BLUEPRINT
 # -------------------------------------------------
 from tools.area_breakup.routes import area_breakup_bp
+from tools.report.routes import report_bp
 
 from extensions import db
 from flask_migrate import Migrate
@@ -29,8 +30,23 @@ def create_app(config_name='default'):
     # -------------------------------------------------------------------
     # LOGGING CONFIG
     # -------------------------------------------------------------------
-    logging.basicConfig(level=logging.DEBUG)
-    app.logger.setLevel(logging.DEBUG)
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
+    app.logger.setLevel(getattr(logging, log_level, logging.INFO))
+
+    # Silence noisy third-party debug logs
+    for noisy in [
+        "botocore",
+        "boto3",
+        "s3transfer",
+        "httpx",
+        "urllib3",
+        "matplotlib",
+        "PIL",
+        "groq",
+        "asyncio",
+    ]:
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     # -------------------------------------------------------------------
     # LOAD CONFIG
@@ -79,6 +95,7 @@ def create_app(config_name='default'):
     # 2. REGISTER THE NEW BLUEPRINT
     # -------------------------------------------------
     app.register_blueprint(area_breakup_bp, url_prefix='/api/area-breakup')
+    app.register_blueprint(report_bp, url_prefix='/api/report')
 
     # -------------------------------------------------------------------
     # ROOT ENDPOINTS
@@ -91,7 +108,8 @@ def create_app(config_name='default'):
                 "buildings": "/api/buildings",
                 "cell_site": "/api/cell-site",
                 "prediction": "/api/prediction",
-                "area_breakup": "/api/area-breakup"
+                "area_breakup": "/api/area-breakup",
+                "report": "/api/report"
             }
         })
 
