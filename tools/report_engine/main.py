@@ -335,10 +335,20 @@ def main(
      
 
 
+    # Remove final PDF from local disk if we have a durable S3 copy
+    if not keep_tmp and s3_url and os.path.exists(pdf_path):
+        try:
+            os.remove(pdf_path)
+            print(f"Removed local PDF: {pdf_path}")
+        except Exception as e:
+            print(f"Warning: failed to remove local PDF: {e}")
+
     if not keep_tmp:
         clean_directory(report_tmp_dir)
 
     return kpi_metadata
     
     
+
+
 

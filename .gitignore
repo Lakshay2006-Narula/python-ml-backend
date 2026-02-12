@@ -64,3 +64,11 @@ htmlcov/
 # Render
 .render/
 Pdf_Report_Generator/
+
+
+data/reports/
+
+data/
+
+
+cache/
