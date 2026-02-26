@@ -113,7 +113,7 @@ def create_app(config_name='default'):
                 "prediction": "/api/prediction",
                 "area_breakup": "/api/area-breakup",
                 "report": "/api/report",
-                'site_prediction': '/api/calibrated-prediction'
+                'site_prediction': '/api/lte-prediction/run'
             }
         })
 
