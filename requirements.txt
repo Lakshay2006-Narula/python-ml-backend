@@ -11,7 +11,6 @@ astor==0.8.1
 asttokens==3.0.0
 async-lru==2.0.4
 attrs==24.3.0
-auto-py-to-exe==2.45.1
 babel==2.17.0
 bcrypt==4.2.1
 beautifulsoup4==4.13.3
@@ -48,7 +47,6 @@ decorator==5.2.1
 defusedxml==0.7.1
 distro==1.9.0
 dnspython==2.8.0
-Eel==0.18.1
 eli5==0.16.0
 email-validator==2.3.0
 et_xmlfile==2.0.0
@@ -108,18 +106,7 @@ json5==0.10.0
 jsonpointer==3.0.0
 jsonschema==4.23.0
 jsonschema-specifications==2024.10.1
-jupyter==1.1.1
-jupyter-console==6.6.3
-jupyter-events==0.12.0
-jupyter-lsp==2.2.5
-jupyter_client==8.6.3
-jupyter_core==5.7.2
-jupyter_server==2.15.0
-jupyter_server_terminals==0.5.3
-jupyterlab==4.3.6
-jupyterlab_pygments==0.3.0
-jupyterlab_server==2.27.3
-jupyterlab_widgets==3.0.13
+
 kaleido==1.1.0
 kiwisolver==1.4.8
 Levenshtein==0.27.1
@@ -158,7 +145,6 @@ pandas-datareader==0.10.0
 pandocfilters==1.5.1
 parso==0.8.4
 patsy==1.0.1
-pefile==2023.2.7
 pillow==11.1.0
 platformdirs==4.3.6
 playwright==1.58.0
@@ -180,19 +166,11 @@ pydantic_core==2.27.2
 pydeck==0.9.1
 pyee==13.0.1
 Pygments==2.19.1
-pyinstaller==6.11.1
-pyinstaller-hooks-contrib==2025.0
 PyMySQL==1.1.2
 pyogrio==0.10.0
 pyparsing==3.2.1
 pypdf==6.7.1
 pyproj==3.7.0
-PyQt5==5.15.11
-PyQt5-Qt5==5.15.2
-PyQt5_sip==12.16.1
-pyqtgraph==0.13.7
-PyQtWebEngine==5.15.7
-PyQtWebEngine-Qt5==5.15.2
 pytest==8.3.4
 pytest-timeout==2.4.0
 python-dateutil==2.9.0.post0
@@ -203,9 +181,6 @@ python-Levenshtein==0.27.1
 python-multipart==0.0.20
 python-pptx==1.0.2
 pytz==2024.2
-pywin32==309
-pywin32-ctypes==0.2.3
-pywinpty==2.0.15
 PyYAML==6.0.2
 pyzmq==26.3.0
 RapidFuzz==3.13.0
@@ -244,13 +219,11 @@ streamlit==1.41.1
 streamlit-autorefresh==1.0.1
 streamlit_folium==0.24.0
 stringcase==1.2.0
-sv-ttk==2.6.0
 tabulate==0.9.0
 tenacity==9.0.0
 terminado==0.18.1
 threadpoolctl==3.5.0
 tinycss2==1.4.0
-tkcalendar==1.6.1
 toml==0.10.2
 tornado==6.4.2
 tqdm==4.67.1
@@ -282,4 +255,5 @@ yellowbrick==1.5
 zipp==3.21.0
 zope.event==5.0
 zope.interface==7.2
+
 
