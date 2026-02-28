@@ -278,7 +278,7 @@ def main(
         verbose=True
     )
     
-    print(f"\n✓ PDF Report generated: {pdf_path}")
+    print(f"\nPDF Report generated: {pdf_path}")
     print("Pipeline completed successfully.")
 
     # Upload to S3 and use S3 URL for sharing

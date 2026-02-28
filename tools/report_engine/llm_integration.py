@@ -214,7 +214,7 @@ Return JSON with EXACT keys:
             debug_path = output_path.replace(".json", "_llm_raw.txt")
             with open(debug_path, "w", encoding="utf-8") as f:
                 f.write(response.choices[0].message.content or "")
-            print(f"✓ Raw LLM output saved: {debug_path}")
+            print(f"Raw LLM output saved: {debug_path}")
     except Exception as e:
         # LLM returned non-JSON or empty response — synthesize safe fallbacks
         if verbose:
@@ -243,7 +243,7 @@ Return JSON with EXACT keys:
             debug_path = output_path.replace(".json", "_llm_raw.txt")
             with open(debug_path, "w", encoding="utf-8") as f:
                 f.write(response.choices[0].message.content or "")
-            print(f"✓ Raw LLM output saved: {debug_path}")
+            print(f"Raw LLM output saved: {debug_path}")
 
     # ---------------- VALIDATION ----------------
 

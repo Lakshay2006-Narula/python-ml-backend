@@ -2,6 +2,7 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 import os
 import logging
+from werkzeug.exceptions import HTTPException
 
 # Import config, blueprints, and db
 from config import config
@@ -141,6 +142,12 @@ def create_app(config_name='default'):
 
     @app.errorhandler(Exception)
     def handle_exception(e):
+        if isinstance(e, HTTPException):
+            return jsonify({
+                "error": e.name,
+                "message": e.description,
+            }), e.code
+
         app.logger.error(f"Unhandled exception: {str(e)}", exc_info=True)
         # Only rollback if db session is active
         try:

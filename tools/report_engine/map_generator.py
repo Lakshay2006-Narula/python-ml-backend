@@ -960,8 +960,8 @@ def generate_handover_map(filtered_df, events, output_html, polygon_wkt=None):
     m = folium.Map(tiles="CartoDB positron", zoom_control=True, control_scale=False, prefer_canvas=True)
     add_fullscreen_css(m)
 
-    # Draw single timestamp-ordered route (backbone)
-    # If session-level coloring available, draw each session as its own colored polyline.
+    # Draw dense route points only (no polylines).
+    # This prevents line-like rendering and keeps handover focus on events.
     if "session_id" in df.columns:
         sessions = sorted(df["session_id"].dropna().unique())
         if "timestamp" in df.columns:
@@ -974,10 +974,8 @@ def generate_handover_map(filtered_df, events, output_html, polygon_wkt=None):
         # Draw each session
         for i, sid in enumerate(sessions):
             seg = df_route[df_route["session_id"] == sid]
-            coords = list(zip(seg["lat"], seg["lon"]))
-            if not coords:
+            if seg.empty:
                 continue
-            folium.PolyLine(locations=coords, color=colors[i % len(colors)], weight=5, opacity=0.95, tooltip=f"Session {sid}").add_to(m)
             # overlay filled points for solid appearance
             for _, r in seg.iterrows():
                 folium.CircleMarker(location=(r["lat"], r["lon"]), radius=4, color=colors[i % len(colors)], fill=True, fill_opacity=0.95).add_to(m)
@@ -989,8 +987,6 @@ def generate_handover_map(filtered_df, events, output_html, polygon_wkt=None):
             df_route = df.sort_values(["timestamp"])
         else:
             df_route = df
-        coords = list(zip(df_route["lat"], df_route["lon"]))
-        folium.PolyLine(locations=coords, color="#2b8cbe", weight=5, opacity=0.95).add_to(m)
 
         # Overlay dense filled points (KPI-style) for solid track appearance
         for _, r in df_route.iterrows():
@@ -1007,7 +1003,7 @@ def generate_handover_map(filtered_df, events, output_html, polygon_wkt=None):
     for ev in events:
         html = spark_svg.format(color=spark_color)
         icon = folium.DivIcon(html=html, icon_size=(28, 28), icon_anchor=(14, 14))
-        tooltip = f"{ev.get('from_provider')} → {ev.get('to_provider')} (Session {ev.get('session_id')})"
+        tooltip = f"{ev.get('from_provider')} -> {ev.get('to_provider')} (Session {ev.get('session_id')})"
         folium.Marker(location=(ev["lat"], ev["lon"]), icon=icon, tooltip=tooltip).add_to(m)
 
     # Polygon boundary
