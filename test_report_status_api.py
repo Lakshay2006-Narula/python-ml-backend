@@ -68,3 +68,25 @@ def test_report_download_redirects_to_s3_when_local_missing():
     resp = client.get(f"/api/report/download/{report_id}", follow_redirects=False)
     assert resp.status_code == 302
     assert resp.headers["Location"] == "https://example.com/report.pdf"
+
+
+def test_report_events_returns_ready_event_for_completed_job():
+    report_id = "report-events"
+    report_routes.REPORT_JOBS.clear()
+    report_routes.REPORT_JOBS[report_id] = {
+        "status": "ready",
+        "project_id": 149,
+        "user_id": 158,
+        "download_url": "https://example.com/report.pdf",
+    }
+
+    app = _make_app()
+    client = app.test_client()
+
+    resp = client.get(f"/api/report/events/{report_id}")
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/event-stream"
+    body = resp.get_data(as_text=True)
+    assert "event: report_status" in body
+    assert '"status": "ready"' in body
+    assert '"download_url": "https://example.com/report.pdf"' in body
